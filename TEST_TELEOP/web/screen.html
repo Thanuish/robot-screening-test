@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Robot control test</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1d22; color: #eee;
+      font: 16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    .hidden { display: none !important; }
+    #legacy { display: none; }
+    #top { position: fixed; top: 0; left: 0; right: 0; z-index: 10; display: flex; gap: 24px; align-items: flex-start;
+      padding: 16px 22px; background: linear-gradient(rgba(12,13,16,.92), rgba(12,13,16,.6) 75%, rgba(12,13,16,0)); }
+    #phaseBox { flex: 1; max-width: 900px; }
+    #phaseTitle { font-size: 26px; font-weight: 700; margin: 0; }
+    #phaseText { font-size: 18px; color: #d8d8d8; margin-top: 4px; }
+    #steps { margin-top: 8px; display: flex; gap: 6px; }
+    #steps span { width: 22px; height: 8px; border-radius: 4px; background: #444; }
+    #steps span.on { background: #4cd07d; }
+    #timer { font: 700 40px/1 ui-monospace, Menlo, Consolas, monospace; color: #fff; min-width: 120px; text-align: right; }
+    #timer.low { color: #ff7070; }
+    #practice { font-size: 13px; color: #9ab; text-align: right; }
+    #center { position: fixed; inset: 0; z-index: 9; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+    #count { font: 800 160px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 4px 30px rgba(0,0,0,.6); }
+    #toast { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); z-index: 11; background: rgba(20,22,27,.9);
+      border: 1px solid #3a3f4a; border-radius: 12px; padding: 12px 22px; font-size: 20px; transition: opacity .4s; }
+    #pair { position: fixed; inset: 0; z-index: 12; display: flex; align-items: center; justify-content: center;
+      background: rgba(15,16,20,.88); }
+    #pair .card { background: #20232a; border: 1px solid #3a3f4a; border-radius: 16px; padding: 28px 34px; display: flex; gap: 32px; max-width: 900px; }
+    #pair img { width: 260px; height: 260px; background: #fff; border-radius: 8px; }
+    #pair h1 { margin: 0 0 10px; font-size: 26px; }
+    #pair ol { padding-left: 20px; color: #d6d6d6; } #pair li { margin: 6px 0; }
+    #pairUrl { font: 13px ui-monospace, monospace; color: #8ab; word-break: break-all; }
+    #phoneBadge { position: fixed; right: 18px; bottom: 18px; z-index: 10; background: rgba(20,22,27,.88);
+      border: 1px solid #3a3f4a; border-radius: 12px; padding: 10px 14px; display: flex; gap: 12px; align-items: center; font-size: 14px; }
+    #phoneBadge img { width: 96px; height: 96px; background: #fff; border-radius: 6px; }
+    #phoneBadge .ok { color: #4cd07d; } #phoneBadge .bad { color: #ff7070; }
+    #help { position: fixed; left: 18px; bottom: 18px; z-index: 10; background: rgba(20,22,27,.85); border: 1px solid #3a3f4a;
+      border-radius: 12px; padding: 10px 14px; font-size: 14px; color: #cfd3da; max-width: min(400px, calc(100vw - 300px)); }
+    #help b { color: #fff; }
+    #done { position: fixed; inset: 0; z-index: 13; display: flex; align-items: center; justify-content: center; background: rgba(15,16,20,.92); }
+    #done .card { background: #20232a; border: 1px solid #3a3f4a; border-radius: 16px; padding: 34px 40px; max-width: 560px; text-align: center; }
+    #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 18px; color: #aaa; z-index: 5; pointer-events: none; }
+    #conn { position: fixed; top: 6px; right: 8px; z-index: 20; font-size: 12px; }
+    #conn.ok { color: #4cd07d; } #conn.bad { color: #ff7070; }
+  </style>
+  <script type="importmap">
+  { "imports": { "three": "/static/vendor/three/build/three.module.js",
+                 "three/addons/": "/static/vendor/three/examples/jsm/" } }
+  </script>
+  <script>
+    window.TELEOP_BASE = '/s/__CODE__';
+    window.TELEOP_MONITOR = true;
+    // first-person, like in VR: your eyes at the robot's head (scene.HEAD_POS), behind the arm,
+    // looking down at the table; the arm reaches out like your own right arm. The phone's
+    // "forward" follows the view (into the screen), also when it is turned (arrow keys).
+    window.TELEOP_MONITOR_VIEW = { eye: [-0.30, 0.0, 1.52], look: [0.47, -0.02, 0.75], fov: 62 };
+  </script>
+</head>
+<body>
+  <!-- elements the 3D viewer (main.js) expects; not used on this page -->
+  <div id="legacy"><div id="hud"><div id="status"></div><button id="btnRec"></button><button id="btnFail"></button>
+    <button id="btnDiscard"></button><button id="btnReset"></button><div id="xrrow"></div><div id="cams"></div></div></div>
+  <span id="conn" class="bad">●</span>
+
+  <div id="top">
+    <div id="phaseBox">
+      <h1 id="phaseTitle">Robot control test</h1>
+      <div id="phaseText">Connecting…</div>
+      <div id="steps"></div>
+    </div>
+    <div><div id="timer"></div><div id="practice"></div></div>
+  </div>
+  <div id="center"><div id="count"></div></div>
+  <div id="toast" style="opacity:0"></div>
+
+  <div id="pair">
+    <div class="card">
+      <img id="qrBig" alt="QR code" src="/qr/__CODE__.svg">
+      <div>
+        <h1>Connect your phone</h1>
+        <ol>
+          <li>Take an <b>Android phone</b> and scan this QR code with its camera.</li>
+          <li>Open the link in <b>Chrome</b> and tap <b>START CONTROLLER</b>. Allow the camera if asked
+            (it is only used to track how you move the phone; nothing is recorded from it).</li>
+          <li>Hold the phone <b>upright, screen facing you, pointing at this screen</b>.</li>
+        </ol>
+        <p>Or type this address on the phone:</p>
+        <div id="pairUrl"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="phoneBadge" class="hidden">
+    <img alt="QR code" src="/qr/__CODE__.svg">
+    <div><div id="phoneState"></div><div style="color:#999;font-size:12px">Lost the phone?<br>Scan again.</div></div>
+  </div>
+
+  <div id="help" class="hidden">
+    <b>Phone controls</b><br>
+    Hold <b>MOVE</b> and move the phone: the gripper moves the same way.<br>
+    Let go of MOVE to move your hand without moving the robot.<br>
+    Turn the phone left / right: the gripper turns. In <b>task 3</b>, tilting and twisting the
+    phone also tilts and twists the gripper.<br>
+    <b>GRAB</b> closes the gripper, <b>RELEASE</b> opens it.<br>
+    <b>RE-CENTER</b>: point the phone at this screen and tap it if directions feel wrong.<br>
+    <b>View</b> (keyboard): arrow keys turn and tilt, <b>+</b> / <b>−</b> zoom, <b>R</b> resets.
+    Or drag and scroll with the mouse. Forward on the phone is always into the screen.
+  </div>
+
+  <div id="done" class="hidden"><div class="card">
+    <h1>Thank you!</h1>
+    <p>You have finished the test. Your results have been saved.<br>You can close this page now.</p>
+  </div></div>
+
+  <div id="loading">Loading the robot…</div>
+  <script type="module" src="/static/main.js?v=__BOOT__"></script>
+  <script type="module" src="/test-static/screen.js?v=__BOOT__"></script>
+</body>
+</html>

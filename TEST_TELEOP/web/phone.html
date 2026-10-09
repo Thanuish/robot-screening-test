@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Robot controller</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #15171c; color: #eee; overflow: hidden;
+      font: 16px/1.4 system-ui, -apple-system, Roboto, sans-serif; -webkit-user-select: none; user-select: none;
+      touch-action: none; }
+    .hidden { display: none !important; }
+    #intro { padding: 22px; }
+    #intro h1 { font-size: 22px; margin: 0 0 10px; }
+    #intro p, #intro li { color: #cfd3da; }
+    #start { width: 100%; padding: 18px; font-size: 20px; font-weight: 700; border: 0; border-radius: 12px;
+      background: #2f6fde; color: #fff; margin-top: 10px; }
+    #err { color: #ff8a8a; }
+    #start:disabled { background: #3a3f4a; color: #888; }
+    /* the controller (shown over the camera image while tracking) */
+    /* the camera image behind the page is covered by phone.js (it paints the AR view opaque;
+       Chrome forces the overlay's own background to be see-through) */
+    #overlay { position: fixed; inset: 0; display: flex; flex-direction: column; background: #15171c; }
+    #hint { padding: 16px; color: #8b919c; font-size: 14px; }
+    #bar { padding: 12px 14px; background: rgba(12,13,16,.82); }
+    #phase { font-weight: 700; font-size: 17px; }
+    #track { font-size: 13px; }
+    #track.ok { color: #4cd07d; } #track.bad { color: #ff7070; }
+    #space { flex: 1; }
+    #row { display: flex; gap: 10px; padding: 10px; }
+    .btn { flex: 1; border: 0; border-radius: 16px; color: #fff; font-weight: 800; font-size: 20px;
+      padding: 22px 6px; background: rgba(60,64,74,.92); }
+    #grab { background: rgba(40,140,80,.95); } #grab.closed { background: rgba(200,90,40,.95); }
+    #recenter { flex: 0 0 auto; font-size: 13px; padding: 10px 14px; border-radius: 10px; }
+    #move { margin: 0 10px 16px; height: 34vh; border-radius: 22px; border: 3px solid #5a8dee;
+      background: rgba(47,111,222,.35); color: #fff; font-size: 30px; font-weight: 900;
+      display: flex; align-items: center; justify-content: center; text-align: center; }
+    #move.on { background: rgba(47,111,222,.95); border-color: #fff; }
+  </style>
+</head>
+<body>
+  <div id="intro">
+    <h1>Robot controller</h1>
+    <ol>
+      <li>Keep the test page open on your computer screen.</li>
+      <li>Hold this phone <b>upright, screen facing you, back camera pointing at your computer screen</b>.</li>
+      <li>Tap START. Allow the camera: the phone needs it to measure how you move it (that's
+        how motion tracking works). You won't see the camera image, and no images are sent anywhere.</li>
+    </ol>
+    <p><b>Controls:</b> hold <b>MOVE</b> and move the phone; the gripper follows. Turn the phone to turn
+    the gripper. <b>GRAB</b> / <b>RELEASE</b> close and open it.</p>
+    <p id="err"></p>
+    <button id="start">START CONTROLLER</button>
+  </div>
+
+  <div id="overlay" class="hidden">
+    <div id="bar">
+      <div id="phase">Connecting…</div>
+      <div id="track" class="bad">Starting tracking…</div>
+    </div>
+    <div id="space"><div id="hint">The camera is only used by the phone to measure how you
+      move it; nothing is recorded or sent. Keep the back camera uncovered and pointed at your
+      desk or screen.</div></div>
+    <div id="row">
+      <button class="btn" id="grab">GRAB</button>
+      <button class="btn" id="recenter">RE-CENTER</button>
+    </div>
+    <div id="move">HOLD ANYWHERE TO MOVE</div>
+  </div>
+  <script>window.TELEOP_BASE = '/s/__CODE__';</script>
+  <script type="module" src="/test-static/phone.js?v=__BOOT__"></script>
+</body>
+</html>

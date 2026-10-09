@@ -1,0 +1,10 @@
+data/
+certs/
+__pycache__/
+*.pyc
+.venv/
+*.mp4
+
+assets/generated/
+MUJOCO_LOG.TXT
+.DS_Store

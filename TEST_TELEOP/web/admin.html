@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Screening results</title>
+  <style>
+    body { margin: 0; padding: 22px; background: #15171c; color: #e8e8e8; font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 22px 0 8px; }
+    .muted { color: #8b919c; }
+    .panel { background: #1f2229; border: 1px solid #333842; border-radius: 12px; padding: 14px 16px; margin-top: 14px; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    input { background: #111; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 6px 8px; font: inherit; }
+    input[type=number] { width: 80px; }
+    button, a.btn { background: #2f6fde; color: #fff; border: 0; border-radius: 6px; padding: 7px 12px; font: inherit; cursor: pointer; text-decoration: none; }
+    button.secondary { background: #3a3f4a; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #2c3038; white-space: nowrap; }
+    th { color: #9aa1ad; font-weight: 600; cursor: pointer; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .pass { color: #4cd07d; font-weight: 700; } .fail { color: #ff7070; font-weight: 700; }
+    .st { padding: 2px 8px; border-radius: 10px; font-size: 12px; background: #333842; }
+    .st.playing { background: #2f6fde; } .st.done { background: #2d6b45; } .st.abandoned { background: #7a4a1f; }
+    #codes { font: 13px ui-monospace, Menlo, Consolas, monospace; white-space: pre; color: #cfe; }
+  </style>
+</head>
+<body>
+  <h1>Screening results</h1>
+  <div class="muted">Updates every few seconds. Candidates open the public address of your tunnel and enter their invite code.</div>
+  <div class="panel"><b>Public address for candidates:</b> <span id="publicUrl" style="font-family:ui-monospace,monospace"></span></div>
+
+  <div class="panel">
+    <div class="row">
+      <b>Pass mark</b> overall score ≥ <input id="passScore" type="number" min="0" max="100" step="1">
+      <label><input id="reqPractice" type="checkbox"> practice reach must be completed</label>
+      <button class="secondary" id="saveSettings">Save</button>
+      <span class="muted" id="saved"></span>
+    </div>
+    <div class="muted" style="margin-top:6px">
+      Score per task (0-100): 60 x steps completed + 20 x time left (if completed) + 20 x grasp efficiency (minus a third per drop).
+      Overall = mean of the three tasks (task 3 uses all six degrees of freedom: tilt and twist too). Reach eff. = straight-line distance / distance moved in the practice (1 = perfectly direct).
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <b>Test one part</b>
+      <select id="onlyPart" style="background:#111;color:#eee;border:1px solid #444;border-radius:6px;padding:6px 8px;font:inherit">
+        <option value="reach">Practice 1: move</option>
+        <option value="pick">Practice 2: pick and place</option>
+        <option value="shapes">Task 1: shapes</option>
+        <option value="sort">Task 2: sorting</option>
+        <option value="tilt" selected>Task 3: tilt and pour</option>
+      </select>
+      <button id="makeTest">Create test link</button>
+      <span class="muted">phone pairing, then only that part (no verdict; batch "Testing")</span>
+    </div>
+    <div id="testLink" style="font:13px ui-monospace,Menlo,Consolas,monospace;color:#cfe;margin-top:6px"></div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <b>New invite codes</b> batch name <input id="batchName" placeholder="e.g. October A">
+      number <input id="batchN" type="number" value="15" min="1" max="100">
+      <button id="makeBatch">Create</button>
+      <a class="btn" href="/admin/results.csv">Download CSV</a>
+    </div>
+    <div id="codes"></div>
+  </div>
+
+  <h2>Candidates <span class="muted" id="count"></span></h2>
+  <div style="overflow-x:auto"><table>
+    <thead><tr>
+      <th data-k="name">Name</th><th data-k="code">Code</th><th data-k="batch">Batch</th><th data-k="status">Status</th>
+      <th data-k="phase">Phase</th><th data-k="reach_efficiency">Reach eff.</th>
+      <th data-k="shapes">Task 1</th><th data-k="sort">Task 2</th><th data-k="tilt">Task 3</th><th data-k="overall">Overall</th><th data-k="pass">Result</th>
+      <th data-k="started">Started</th><th></th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let sortKey = 'overall', sortDir = -1, data = { candidates: [], settings: {} }, settingsLoaded = false;
+const num = (v, d = 1) => v === null || v === undefined ? '' : (+v).toFixed(d);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function load() {
+  const r = await fetch('/admin/api');
+  data = await r.json();
+  $('publicUrl').innerHTML = data.public_url ? `<a href="${data.public_url}" style="color:#8bf">${data.public_url}</a>`
+    : (data.tunnel ? 'starting the tunnel…' : 'no tunnel (start the lobby with --tunnel, or use start_screening.bat)');
+  if (!settingsLoaded) {
+    $('passScore').value = data.settings.pass_score;
+    $('reqPractice').checked = data.settings.require_practice;
+    settingsLoaded = true;
+  }
+  render();
+}
+function render() {
+  const rows = [...data.candidates].sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (x === y) return 0;
+    if (x === null || x === undefined || x === '') return 1;
+    if (y === null || y === undefined || y === '') return -1;
+    return (x > y ? 1 : -1) * sortDir;
+  });
+  $('count').textContent = `(${rows.length}, ${rows.filter(r => r.status === 'done').length} finished, ` +
+    `${rows.filter(r => r.pass === true).length} passed)`;
+  $('rows').innerHTML = rows.map(r => `<tr>
+    <td>${esc(r.name) || '<span class="muted">not used yet</span>'}</td>
+    <td title="${data.public_url ? data.public_url + '/?code=' + r.code : ''}">${r.code}</td>
+    <td>${esc(r.batch)}${r.only ? ` <span class="st">only ${esc(r.only)}</span>` : ''}</td>
+    <td><span class="st ${r.status}">${r.status}${r.running ? ' ●' : ''}</span></td>
+    <td>${esc(r.phase || '')}</td>
+    <td class="num">${num(r.reach_efficiency, 2)}</td>
+    <td class="num">${num(r.shapes)} <span class="muted">${r.shapes_steps}</span></td>
+    <td class="num">${num(r.sort)} <span class="muted">${r.sort_steps}</span></td>
+    <td class="num">${num(r.tilt)} <span class="muted">${r.tilt_steps}</span></td>
+    <td class="num"><b>${num(r.overall)}</b></td>
+    <td>${r.pass === true ? '<span class="pass">PASS</span>' : r.pass === false ? '<span class="fail">FAIL</span>' : ''}</td>
+    <td>${esc(r.started || '')}</td>
+    <td>${r.status !== 'new' ? `<button class="secondary" onclick="retake('${r.code}')" title="Let this candidate take the test again (the old attempt is kept)">Allow retake</button>` : ''}</td>
+  </tr>`).join('');
+}
+document.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => {
+  const k = th.dataset.k;
+  sortDir = sortKey === k ? -sortDir : -1;
+  sortKey = k;
+  render();
+});
+async function retake(code) {
+  if (!confirm(`Let ${code} take the test again? Their current attempt is kept in its folder, renamed.`)) return;
+  await fetch(`/admin/reset/${code}`, { method: 'POST' });
+  load();
+}
+$('makeBatch').onclick = async () => {
+  const r = await fetch('/admin/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: $('batchName').value, n: +$('batchN').value }) });
+  const j = await r.json();
+  const base = data.public_url || '(public address)';
+  $('codes').textContent = 'New invite links (send one to each candidate; each works once):\n' +
+    j.codes.map(c => `${base}/?code=${c}`).join('\n');
+  load();
+};
+$('makeTest').onclick = async () => {
+  const only = $('onlyPart').value;
+  const r = await fetch('/admin/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Testing', n: 1, only }) });
+  const j = await r.json();
+  const base = data.public_url || '(public address)';
+  $('testLink').innerHTML = `Test link (${only} only): <a style="color:#8bf" href="${base}/?code=${j.codes[0]}">${base}/?code=${j.codes[0]}</a>`;
+  load();
+};
+$('saveSettings').onclick = async () => {
+  await fetch('/admin/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pass_score: +$('passScore').value, require_practice: $('reqPractice').checked }) });
+  $('saved').textContent = 'saved';
+  setTimeout(() => $('saved').textContent = '', 1500);
+  load();
+};
+load();
+setInterval(load, 3000);
+</script>
+</body>
+</html>

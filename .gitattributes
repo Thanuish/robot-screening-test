@@ -1,0 +1,9 @@
+# Windows batch files need CRLF, shell scripts LF, whatever machine checks them out
+*.bat      text eol=crlf
+*.command  text eol=lf
+*.sh       text eol=lf
+*.py       text eol=lf
+*.js       text eol=lf
+*.stl      binary
+*.obj      binary
+*.png      binary
