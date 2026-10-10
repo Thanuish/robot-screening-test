@@ -1,0 +1,412 @@
+# =============================================================================================
+#  Screening test configuration
+# =============================================================================================
+#  Everything about the test is defined here: the robot arm, what the candidate sees, the
+#  objects on the table, the markers (zones, outlines, bins...), the phases and their steps,
+#  and the scoring. Edit it with any text editor; check it with
+#
+#      python -m TEST_TELEOP.check_config
+#
+#  which prints every problem it finds (unknown settings, impossible values, names that don't
+#  match). The simulator and the lobby read this file when they start.
+#
+#  Units: metres, degrees, seconds, kilograms. Sizes are FULL sizes (a 4 cm cube: size =
+#  [0.04, 0.04, 0.04]). Positions on the table are [x, y]:
+#      x = forward, away from the robot (the arm's base is at x = 0, the far edge at x = 0.95)
+#      y = to the robot's left (the table goes from y = -0.75 to 0.75)
+#  Heights are above the table top. Colours are [red, green, blue] from 0 to 1 (a 4th number
+#  is the opacity), or "#rrggbb".
+# =============================================================================================
+
+version = 1
+
+# ---------------------------------------------------------------------------- the robot arm
+[arm]
+model = "ur5e"                 # Universal Robots UR5e with a Robotiq 2F-85 gripper (the only one for now)
+side = "right"                 # which arm of the robot's pair the candidate controls (the other is hidden)
+base = [0.0, -0.36]            # where its base stands, on the back edge of the table
+# joint angles of the start pose (shoulder pan, shoulder lift, elbow, wrist 1, 2, 3): elbow up,
+# gripper pointing down, 20 cm above the table
+home_deg = [0.7448, -92.3608, 111.956, -109.5495, -90.0002, 0.7448]
+min_height = 0.02              # the gripper's pinch point never goes lower than this above the table
+max_speed = 1.0                # [m/s] top speed of the gripper (about a real UR5e's); quick flicks are capped
+max_turn_deg = 180             # [deg/s] its top turning speed
+servo_stiffness = 1.0          # x the UR5e's own joint motor stiffness (higher = follows faster; 3 was shaky)
+
+[controls]
+motion_scale = 1.5             # the robot moves this many cm per cm the phone moves
+
+# ---------------------------------------------------------------------------- what the candidate sees
+[view]                         # the monitor's starting camera (the candidate can turn and zoom it)
+eye = [-0.30, 0.0, 1.52]       # camera position [x, y, height above the floor]: the robot's "head"
+look_at = [0.47, -0.02, 0.75]  # the point it looks at [x, y, height above the floor] (the table is 0.75 high)
+fov_deg = 62                   # field of view (up-down)
+
+[depth_cues]                   # a ring on the table below the gripper and a line down to it
+enabled = true
+grab_height = 0.06             # they turn green when the fingertips are this low (low enough to grab)
+color = "#ffd24a"
+grab_color = "#4cd07d"
+
+[reach_target]                 # the glowing ball of the reach steps
+diameter = 0.044
+color = [0.2, 1.0, 0.4, 0.55]
+
+# ---------------------------------------------------------------------------- timing and checks
+[timing]
+countdown_s = 3.0              # countdown before each timed phase
+pair_hold_s = 1.0              # the phone must be connected this long before the test goes on
+
+[tolerances]
+reach = 0.03                   # gripper this close to a reach target = touched
+slot_distance = 0.016          # a shape this close to its outline's centre ...
+slot_angle_deg = 15            # ... and turned to within this angle = in its outline
+rest_speed = 0.03              # [m/s] an object slower than this is at rest
+rest_height = 0.008            # ... and within this of its resting height = lying on the table
+held_lift = 0.02               # an object this far above its resting height ...
+held_distance = 0.08           # ... and this close to the gripper = held (a grasp)
+container_margin = 0.01        # an object lower than a bin's / bowl's wall + this = inside
+flat_within_deg = 25.842       # lay_flat: the object's thin side within this angle of vertical
+upright_within_deg = 19.948    # set_upright: the cup's axis within this angle of vertical
+
+# ---------------------------------------------------------------------------- scoring
+# Score per scored task, 0 to 100:
+#     steps x (steps completed / steps)
+#   + time  x (time left / time limit)              (only if all steps were completed)
+#   + grasp x (grasps that lifted something / grasp attempts) x (1 - drops / drops_to_zero)
+# Overall = the mean of the scored tasks. Pass = overall >= pass_mark and every phase in
+# must_complete completed. Changing these changes how results compare with earlier candidates.
+[scoring]
+steps = 60
+time = 20
+grasp = 20
+drops_to_zero = 3
+pass_mark = 50
+must_complete = ["reach"]
+
+[texts]                        # short messages between phases
+well_done = "Well done!"
+time_up = "Time is up."
+next = "Next:"
+phone_connected = "Phone connected"
+
+# ---------------------------------------------------------------------------- materials
+# Shiny or matte surfaces, used by objects and markers with material = "<name>".
+# texture: "wood_floor" or "laminate" (built in); without one the colour is plain.
+[materials.ceramic]            # glazed white ceramic (the cup)
+color = [0.95, 0.95, 0.93]
+specular = 0.6
+shininess = 0.8
+roughness = 0.25
+
+[materials.ceramic_blue]       # the bowl
+color = [0.55, 0.68, 0.85]
+specular = 0.6
+shininess = 0.8
+roughness = 0.25
+
+[materials.wood]               # the book holder
+color = [0.85, 0.75, 0.65]
+texture = "wood_floor"
+specular = 0.2
+roughness = 0.6
+
+# ---------------------------------------------------------------------------- objects
+# Things the robot can move. Each phase lists the objects it uses; the others are hidden.
+#   shape     "box" (size = [x, y, height]), "sphere" (diameter), "cylinder" (diameter, height)
+#             or "cup" (diameter, height, wall, bottom, segments: hollow, things can be poured)
+#   start     [x, y] on the table;  yaw_deg: turned (seen from above);  pitch_deg: tipped over
+#             (boxes; 90 = standing on its end)
+#   start_in  "<cup>": balls that start inside a cup
+#   mass      [kg]
+#   friction  [sliding, twisting, rolling]  (1.2 = grippy rubber-like, 0.4 = smooth)
+#   condim    4: sliding + twisting friction, 6: also rolling (default: 6 for balls and cups)
+#   graspable false: grasps and drops aren't counted for it (balls that are poured)
+#   count     several identical objects: named <name>_0, <name>_1, ...
+
+# practice: pick this up and put it in the green square
+[objects.tut_cube]
+shape = "box"
+size = [0.04, 0.04, 0.04]
+color = [0.95, 0.85, 0.2]
+start = [0.42, 0.02]
+mass = 0.08
+friction = [1.2, 0.01, 0.001]
+
+# task 1, shapes: each goes into its outline (turn it to match)
+[objects.big_square]
+shape = "box"
+size = [0.06, 0.06, 0.05]
+color = [0.95, 0.55, 0.15]
+start = [0.40, 0.13]
+yaw_deg = 20.0535
+mass = 0.08
+friction = [1.2, 0.01, 0.001]
+
+[objects.small_square]
+shape = "box"
+size = [0.035, 0.035, 0.05]
+color = [0.6, 0.35, 0.85]
+start = [0.43, 0.0]
+yaw_deg = -20.0535
+mass = 0.08
+friction = [1.2, 0.01, 0.001]
+
+[objects.bar]                  # starts lengthwise along x; its outline is turned 90 degrees
+shape = "box"
+size = [0.035, 0.09, 0.05]
+color = [0.2, 0.75, 0.8]
+start = [0.40, -0.13]
+yaw_deg = 90
+mass = 0.08
+friction = [1.2, 0.01, 0.001]
+
+# task 2, sorting: each into the bin of its colour
+[objects.red_ball]
+shape = "sphere"
+diameter = 0.05
+color = [0.85, 0.15, 0.15]
+start = [0.42, -0.16]
+mass = 0.08
+friction = [1.2, 0.01, 0.002]  # some rolling friction: it doesn't roll away forever
+
+[objects.blue_cube]
+shape = "box"
+size = [0.044, 0.044, 0.044]
+color = [0.15, 0.35, 0.9]
+start = [0.40, 0.14]
+yaw_deg = 28.6479
+mass = 0.08
+friction = [1.2, 0.01, 0.001]
+
+[objects.green_cylinder]
+shape = "cylinder"
+diameter = 0.04
+height = 0.06
+color = [0.2, 0.7, 0.3]
+start = [0.43, -0.01]
+mass = 0.08
+friction = [1.2, 0.01, 0.001]
+
+# task 3, tilt and pour (all six degrees of freedom)
+[objects.book]                 # a hardback (12 x 15 x 2.5 cm), standing in its holder
+shape = "box"
+size = [0.12, 0.15, 0.025]
+color = [0.55, 0.13, 0.12]
+start = [0.43, 0.06]
+pitch_deg = 90
+mass = 0.2
+friction = [1.2, 0.01, 0.001]
+
+[objects.cup]                  # a glazed mug (140 g), hollow so the balls really pour out
+shape = "cup"
+diameter = 0.068
+height = 0.09
+wall = 0.004
+bottom = 0.006
+segments = 20                  # its round wall is made of this many pieces
+material = "ceramic"
+start = [0.42, -0.14]
+mass = 0.14
+friction = [1.0, 0.02, 0.001]  # twisting friction: it doesn't spin in the fingers when tipped
+
+[objects.ball]                 # five small balls in the cup, to pour into the bowl
+shape = "sphere"
+count = 5
+diameter = 0.018
+color = [0.98, 0.8, 0.1]
+start_in = "cup"
+mass = 0.01
+friction = [0.6, 0.005, 0.0005]
+graspable = false
+
+# ---------------------------------------------------------------------------- markers
+# Fixed things on the table: they don't move when touched. Each phase lists the markers it shows.
+#   kind = "zone"    a square outline to put something in (size = [x, y], line width)
+#   kind = "slot"    an outline shaped like one object (its size + margin), to put it in turned
+#                    to match; symmetry_deg: it looks the same turned by this (a square: 90)
+#   kind = "bin"     a box with walls (inner_size, wall_height, wall thickness)
+#   kind = "bowl"    a round bowl (inner_diameter, wall_height, wall, bottom, segments)
+#   kind = "holder"  posts that hold a book standing up (post_spacing = [across, along] the book)
+#   pos = [x, y];  yaw_deg turns it
+
+[markers.zone]                 # practice 2: the green square
+kind = "zone"
+pos = [0.58, 0.02]
+size = [0.09, 0.09]
+line = 0.01
+color = [0.15, 0.8, 0.35]
+
+[markers.slot_big_square]
+kind = "slot"
+object = "big_square"
+pos = [0.60, 0.13]
+symmetry_deg = 90
+margin = 0.006
+color = [0.25, 0.25, 0.28]
+
+[markers.slot_small_square]
+kind = "slot"
+object = "small_square"
+pos = [0.60, 0.04]
+symmetry_deg = 90
+margin = 0.006
+color = [0.25, 0.25, 0.28]
+
+[markers.slot_bar]
+kind = "slot"
+object = "bar"
+pos = [0.60, -0.06]
+symmetry_deg = 180
+margin = 0.006
+color = [0.25, 0.25, 0.28]
+
+[markers.bin_red]
+kind = "bin"
+pos = [0.62, 0.15]
+inner_size = 0.11
+wall_height = 0.04
+wall = 0.005
+color = [0.85, 0.15, 0.15]
+
+[markers.bin_blue]
+kind = "bin"
+pos = [0.62, -0.005]
+inner_size = 0.11
+wall_height = 0.04
+wall = 0.005
+color = [0.15, 0.35, 0.9]
+
+[markers.bin_green]
+kind = "bin"
+pos = [0.62, -0.16]
+inner_size = 0.11
+wall_height = 0.04
+wall = 0.005
+color = [0.2, 0.7, 0.3]
+
+[markers.holder]               # the book stands between its posts
+kind = "holder"
+pos = [0.43, 0.06]
+post_spacing = [0.034, 0.11]
+post_size = [0.007, 0.007, 0.05]
+base_size = [0.044, 0.11, 0.006]
+material = "wood"
+
+[markers.mat]                  # where the book is laid flat
+kind = "zone"
+pos = [0.60, 0.02]
+size = [0.17, 0.17]
+line = 0.01
+color = [0.15, 0.8, 0.35]
+
+[markers.bowl]
+kind = "bowl"
+pos = [0.62, -0.20]
+inner_diameter = 0.15
+wall_height = 0.035
+wall = 0.004
+bottom = 0.005
+segments = 28
+material = "ceramic_blue"
+
+# ---------------------------------------------------------------------------- phases
+# The test runs these in order. kind = "pair" (connect the phone) comes first, kind = "done"
+# last; the others are tasks:
+#   scored        false = practice
+#   time_limit_s  the phase ends when time is up (its steps then count as they are)
+#   rotation      "yaw": the gripper turns left/right with the phone and keeps pointing down;
+#                 "full": it also tilts and twists (all six degrees of freedom)
+#   objects, markers   what is on the table in this phase
+#   steps         what the candidate has to do; the phase is complete when all are done:
+#     { type = "reach",         target = [x, y, height] }           touch a glowing ball (one at a time)
+#     { type = "place_in_zone", object = "...", zone = "..." }      put it in a zone, at rest
+#     { type = "place_in_slot", object = "...", slot = "..." }      in its outline, turned to match, at rest
+#     { type = "place_in_bin",  object = "...", bin = "..." }       in a bin
+#     { type = "remove_from",   object = "...", holder = "...", distance = 0.07 }   taken this far out
+#     { type = "lay_flat",      object = "...", zone = "..." }      lying on its thin side in a zone, let go
+#     { type = "pour_into",     objects = "<group>", container = "...", count = 4 }  so many in a bowl/bin
+#     { type = "set_upright",   object = "..." }                    standing upright on the table, let go
+#   Optional in a step: id = "..." (a name), label = "..." (shown to the candidate),
+#   after = "<id>" (only counts once that step is done). Place steps count while they hold
+#   (taking the object out again undoes them); the others stay done once done.
+
+[[phases]]
+key = "pair"
+kind = "pair"
+title = "Connect your phone"
+text = "Scan the QR code with your Android phone, open the link in Chrome and tap START CONTROLLER. Hold the phone upright, screen facing you, like a camera."
+
+[[phases]]
+key = "reach"
+title = "Practice 1: move"
+scored = false
+time_limit_s = 150
+text = "Hold MOVE and move your phone: the gripper follows your hand. Touch the green ball with the gripper. Let go of MOVE to reposition your hand."
+steps = [
+  { type = "reach", target = [0.46, 0.12, 0.11] },
+  { type = "reach", target = [0.58, -0.14, 0.07] },
+  { type = "reach", target = [0.40, -0.16, 0.22] },
+]
+
+[[phases]]
+key = "pick"
+title = "Practice 2: pick and place"
+scored = false
+time_limit_s = 150
+text = "Bring the open gripper down around the yellow cube, tap GRAB, lift it, put it into the green square and tap RELEASE. Turn your phone to turn the gripper."
+objects = ["tut_cube"]
+markers = ["zone"]
+steps = [
+  { type = "place_in_zone", object = "tut_cube", zone = "zone", label = "yellow cube in the green square" },
+]
+
+[[phases]]
+key = "shapes"
+title = "Task 1: shapes"
+scored = true
+time_limit_s = 240
+text = "Put each shape into its outline on the board. Turn the shapes to match."
+objects = ["big_square", "small_square", "bar"]
+markers = ["slot_big_square", "slot_small_square", "slot_bar"]
+steps = [
+  { type = "place_in_slot", object = "big_square", slot = "slot_big_square", label = "big square" },
+  { type = "place_in_slot", object = "small_square", slot = "slot_small_square", label = "small square" },
+  { type = "place_in_slot", object = "bar", slot = "slot_bar", label = "bar" },
+]
+
+[[phases]]
+key = "sort"
+title = "Task 2: sort by colour"
+scored = true
+time_limit_s = 180
+text = "Put each object into the bin of its colour."
+objects = ["red_ball", "blue_cube", "green_cylinder"]
+markers = ["bin_red", "bin_blue", "bin_green"]
+steps = [
+  { type = "place_in_bin", object = "red_ball", bin = "bin_red", label = "red ball" },
+  { type = "place_in_bin", object = "blue_cube", bin = "bin_blue", label = "blue cube" },
+  { type = "place_in_bin", object = "green_cylinder", bin = "bin_green", label = "green cylinder" },
+]
+
+[[phases]]
+key = "tilt"
+title = "Task 3: tilt and pour"
+scored = true
+time_limit_s = 300
+rotation = "full"
+text = "Now the gripper also tilts and twists with your phone. Take the book out of its holder, turn it flat and lay it on the green mat. Then pour the balls from the cup into the bowl and set the cup down upright."
+objects = ["book", "cup", "ball"]
+markers = ["holder", "mat", "bowl"]
+steps = [
+  { id = "book_out", type = "remove_from", object = "book", holder = "holder", distance = 0.07, label = "book out of the holder" },
+  { id = "book_flat", type = "lay_flat", object = "book", zone = "mat", after = "book_out", label = "book flat on the mat" },
+  { id = "poured", type = "pour_into", objects = "ball", container = "bowl", count = 4, label = "balls in the bowl" },
+  { id = "cup_up", type = "set_upright", object = "cup", after = "poured", label = "cup upright again" },
+]
+
+[[phases]]
+key = "done"
+kind = "done"
+title = "Finished"
+text = "Thank you! You can close this page."

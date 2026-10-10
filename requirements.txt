@@ -8,3 +8,5 @@ imageio[ffmpeg]>=2.34
 Pillow>=10
 # QR codes for the phone pairing (TEST_TELEOP/lobby.py)
 segno>=1.6
+# writing config/screening.toml back without losing its comments (admin page, lab)
+tomlkit>=0.12
