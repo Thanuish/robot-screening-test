@@ -29,14 +29,15 @@ Practice and tasks 1–2 use the phone's position and its turn left / right; the
 pointing down. **Task 3 uses all six degrees of freedom**: tilting and twisting the phone also
 tilts and twists the gripper (the phone shows "TILT ON"). It's closest to real manipulation
 such as handling clothes: lifting things off a surface, turning them over, tipping and pouring.
-Which phases use full rotation is the `rotation` setting of each phase in `screen_game.py`.
+Which phases use full rotation is the `rotation` setting of each phase in
+`config/screening.toml`.
 
 **Physics:** the same as the VR blocks task: rigid MuJoCo bodies, light blocks (80 g), the UR5e's
-own joint motors (`SERVO_STIFFNESS` in `screen_scene.py`). The book weighs 200 g; the mug and
+own joint motors (`servo_stiffness` in the configuration). The book weighs 200 g; the mug and
 the bowl are hollow (rings of wall pieces), so the balls really pour, and the mug has torsional
 friction so it doesn't spin in the fingers when tipped. Only quick flicks are capped: the gripper
-follows the phone at up to 1 m/s and 180°/s, about a real UR5e's top speed (`MAX_SPEED`,
-`MAX_TURN` in `screen_game.py`). The arm collides with the table like a real one: to lay the book
+follows the phone at up to 1 m/s and 180°/s, about a real UR5e's top speed (`max_speed`,
+`max_turn_deg`). The arm collides with the table like a real one: to lay the book
 flat, turn it and tilt the gripper sideways; tilted straight forward, the wrist hits the table
 before the book is low enough.
 
@@ -45,7 +46,7 @@ part). The monitor starts first-person, like in VR: your eyes at the robot's hea
 reaching out like your own right arm.
 Depth cues make height and position readable on a flat screen: a ring on the table straight
 below the gripper (where it would come down) and a line down to it, both turning green when the
-fingertips are low enough to grab (`screen.js`).
+fingertips are low enough to grab (`[depth_cues]` in the configuration).
 
 **Phone controls:** hold **MOVE** and move the phone: the gripper moves the same way. Turning
 the phone turns the gripper. **GRAB** / **RELEASE** close and open it. **RE-CENTER** resets
@@ -65,11 +66,12 @@ Android phones from the last few years). iPhones can't do this in a browser.
 
 **Score per task (0–100):** 60 × steps completed + 20 × time left (only if completed) + 20 ×
 grasp efficiency (grabs that lifted something ÷ grab attempts, minus a third per object dropped).
-**Overall** = mean of the three tasks. **Pass** = overall ≥ the pass mark you set (default 50), and
-practice 1 completed. **Reach efficiency** (straight-line distance ÷ distance moved in practice
+**Overall** = mean of the three tasks. **Pass** = overall ≥ the pass mark (default 50, set on the
+admin page or in the configuration), and practice 1 completed. **Reach efficiency** (straight-line distance ÷ distance moved in practice
 1; 1.0 = perfectly direct) is the clearest single sign of whether someone gets the mapping.
-Times are in simulation time, so a slow connection doesn't cost points. The rules are in
-`screen_game.py`.
+Times are in simulation time, so a slow connection doesn't cost points. The weights are in the
+configuration's `[scoring]`; the rules in `screen_game.py`. Changing them changes how results
+compare with earlier candidates (each result records which configuration it ran with).
 
 ## Running a screening round
 
@@ -106,9 +108,10 @@ test for everyone. Each candidate needs a computer with a modern browser and an 
 the first load is about 5 MB.
 
 **Where results go:** `data/screening/` holds `candidates.json` (codes, names, status),
-`settings.json` (pass mark) and per candidate `<batch>/<code>/screen/attempt/` with
-`results.json` (all metrics and scores), one recording per phase (`episode_XXXX.hdf5`, replay
-with `scripts/replay.py`) and the simulator's log.
+`settings.json` (how many at a time) and per candidate `<batch>/<code>/screen/attempt/` with
+`results.json` (all metrics and scores), `screening.toml` (the configuration the attempt ran
+with), one recording per phase (`episode_XXXX.hdf5`, replay with `scripts/replay.py`) and the
+simulator's log.
 
 **Privacy:** candidates agree to the recording on the start page. Decide how long you keep the
 recordings, and delete a candidate's folder when you no longer need it.
@@ -130,8 +133,9 @@ TEST_TELEOP/
                    per candidate (a separate process), relays the monitor and phone to it,
                    results page and CSV (/admin, this PC only), Cloudflare quick tunnel
   worker.py        one candidate's simulator: vrteleop's server with the task registered
-  screen_scene.py  the task's objects, outlines, bins and targets (a vrteleop scene plugin)
-  screen_game.py   phases, goal checks, metrics, scores, results.json
+  config.py        reads and checks config/screening.toml (check_config.py: check it by hand)
+  screen_scene.py  builds the objects, outlines, bins and targets from it (a vrteleop scene plugin)
+  screen_game.py   phases, goal checks per step type, metrics, scores, results.json
   screen_bot.py    plays the whole test through the same messages a phone sends (self-check)
   web/
     screen.html/.js  the candidate's monitor page (the 3D view is vrteleop/web/main.js)
@@ -151,7 +155,35 @@ motion by it (and re-anchors the clutch when it changes, so the arm doesn't jump
 monitor follows the phone about 0.15–0.25 s later (phone → your laptop → monitor, plus the
 arm's own response). Candidates at home see the same.
 
-**Settings:** `data/screening/settings.json`: `pass_score`, `require_practice`, `scale` (robot
-motion per phone motion, default 1.5), `max_concurrent` (15), `idle_timeout_min` (an abandoned
-test's simulator is stopped after this). Time limits and goal tolerances: top of
-`screen_game.py`. Object positions: `screen_scene.py`.
+**Settings:** `data/screening/settings.json`: `max_concurrent` (15), `idle_timeout_min` (an
+abandoned test's simulator is stopped after this). Everything about the test itself is in the
+configuration (next section).
+
+## Changing the test: config/screening.toml
+
+One file defines the whole test, in plain units (metres, degrees, seconds) with a comment on
+every setting:
+
+| Section | What |
+|---|---|
+| `[arm]` | which arm, where its base stands, start pose, top speed and turning speed, motor stiffness |
+| `[controls]` | `motion_scale`: robot motion per phone motion (1.5) |
+| `[view]`, `[depth_cues]` | the monitor's starting camera; the ring and line below the gripper |
+| `[timing]`, `[tolerances]` | countdown; how close counts as "in", "touched", "at rest", "flat"... |
+| `[scoring]` | the weights (60 / 20 / 20), the pass mark, which practice must be completed |
+| `[materials.*]` | shiny or matte surfaces (ceramic, wood) |
+| `[objects.*]` | every object: shape, size, colour, mass, friction, where it starts |
+| `[markers.*]` | zones, outlines, bins, the bowl, the book holder |
+| `[[phases]]` | the phases in order: text, time limit, scored or practice, rotation, objects, markers, and the **steps** to do |
+
+Steps are building blocks: `reach` a target, `place_in_zone`, `place_in_slot` (turned to match),
+`place_in_bin`, `remove_from` a holder, `lay_flat`, `pour_into` a bowl, `set_upright`. A new task
+is a new `[[phases]]` entry made of these, with its objects and markers; no programming.
+
+After editing, check the file: `python -m TEST_TELEOP.check_config`. It lists every problem
+(a misspelt setting, a size below zero, an object off the table or out of the arm's reach, a
+step naming a marker the phase doesn't show...). Then run the bot,
+`python -m TEST_TELEOP.screen_bot`, to see that every task can still be done. New simulators
+(each new candidate) use the changed file; the lobby keeps running. If the file is broken, the
+admin page says so and keeps using the last good version. To try another file without touching
+the real one, set `SCREEN_CONFIG=path/to/file.toml`.

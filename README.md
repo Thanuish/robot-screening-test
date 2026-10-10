@@ -42,7 +42,7 @@ automatically and prints the scores.
 TEST_TELEOP/     the screening test: lobby, tasks and scoring, phone and monitor pages (see its README)
 vrteleop/        the robot simulator it runs on (MuJoCo scene, arm control, recording, 3D viewer)
 assets/          robot models from MuJoCo Menagerie: UR5e and Robotiq 2F-85 (see their LICENSE files)
-config/          garment settings used by the simulator's scene code
+config/          screening.toml: the whole test (arm, view, objects, phases, scoring); cloth.toml: simulator garment settings
 scripts/         replay.py: replay a recorded attempt (data/screening/.../episode_XXXX.hdf5)
 ```
 
