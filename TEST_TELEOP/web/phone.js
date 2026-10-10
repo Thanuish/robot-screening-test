@@ -1,6 +1,7 @@
 // Phone controller for the screening test: an AR session (WebXR, Chrome on Android with
 // ARCore) tracks the phone's position and rotation in the room; every frame its pose is sent to
-// the simulator as the right "controller", the same message a VR controller sends.
+// the simulator as the arm's "controller" (the right one by default), the same message a VR
+// controller sends.
 //   MOVE (hold)   = the grip button (clutch): the gripper follows the phone's motion
 //   GRAB/RELEASE  = gripper closed / open (sent as the thumbstick, which the server integrates)
 //   RE-CENTER     = "the direction I'm pointing now is forward (into the screen)"
@@ -156,7 +157,10 @@ function send(pose, tracked) {
     right = { pose: [...mj, ...q],
               grip: moving && tracked ? 1 : 0, stick: [0, closed ? 1 : -1], buttons: [], epoch };
   }
-  ws.send(JSON.stringify({ type: 'input', t: performance.now() / 1000, head: null, left: null, right }));
+  // sent as the controller of the arm the test uses ([arm] side; the other one gets nothing)
+  const side = status.task_game?.arm || 'right';
+  ws.send(JSON.stringify({ type: 'input', t: performance.now() / 1000, head: null, left: null, right: null,
+                           [side]: right }));
 }
 
 // ------------------------------------------------------------ AR session

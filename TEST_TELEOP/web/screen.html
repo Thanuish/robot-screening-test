@@ -51,10 +51,12 @@
   <script>
     window.TELEOP_BASE = '/s/__CODE__';
     window.TELEOP_MONITOR = true;
-    // first-person, like in VR: your eyes at the robot's head (scene.HEAD_POS), behind the arm,
-    // looking down at the table; the arm reaches out like your own right arm. The phone's
-    // "forward" follows the view (into the screen), also when it is turned (arrow keys).
-    window.TELEOP_MONITOR_VIEW = { eye: [-0.30, 0.0, 1.52], look: [0.47, -0.02, 0.75], fov: 62 };
+    // the test's configuration (config/screening.toml: [view], [depth_cues], the arm...)
+    window.SCREEN_CONFIG = __CONFIG__;
+    // the starting view ([view]): by default first-person, like in VR: your eyes at the robot's
+    // head, behind the arm, looking down at the table. The phone's "forward" follows the view
+    // (into the screen), also when it is turned (arrow keys).
+    window.TELEOP_MONITOR_VIEW = window.SCREEN_CONFIG.view;
   </script>
 </head>
 <body>

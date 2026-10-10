@@ -28,17 +28,19 @@
   <h1>Screening results</h1>
   <div class="muted">Updates every few seconds. Candidates open the public address of your tunnel and enter their invite code.</div>
   <div class="panel"><b>Public address for candidates:</b> <span id="publicUrl" style="font-family:ui-monospace,monospace"></span></div>
+  <div class="panel" id="configError" style="display:none;border-color:#a44;color:#fbb;white-space:pre-wrap"></div>
 
   <div class="panel">
     <div class="row">
       <b>Pass mark</b> overall score ≥ <input id="passScore" type="number" min="0" max="100" step="1">
-      <label><input id="reqPractice" type="checkbox"> practice reach must be completed</label>
+      <span id="mustComplete"></span>
       <button class="secondary" id="saveSettings">Save</button>
       <span class="muted" id="saved"></span>
     </div>
     <div class="muted" style="margin-top:6px">
-      Score per task (0-100): 60 x steps completed + 20 x time left (if completed) + 20 x grasp efficiency (minus a third per drop).
-      Overall = mean of the three tasks (task 3 uses all six degrees of freedom: tilt and twist too). Reach eff. = straight-line distance / distance moved in the practice (1 = perfectly direct).
+      Score per task (0-100): steps completed + time left (if completed) + grasp efficiency (minus a share per drop); weights in the configuration.
+      Overall = mean of the scored tasks. Reach eff. = straight-line distance / distance moved in the reach practice (1 = perfectly direct).
+      The test (phases, objects, scoring, pass mark) is defined in <code id="configPath"></code>; the pass mark saved here goes into that file.
     </div>
   </div>
 
@@ -46,11 +48,6 @@
     <div class="row">
       <b>Test one part</b>
       <select id="onlyPart" style="background:#111;color:#eee;border:1px solid #444;border-radius:6px;padding:6px 8px;font:inherit">
-        <option value="reach">Practice 1: move</option>
-        <option value="pick">Practice 2: pick and place</option>
-        <option value="shapes">Task 1: shapes</option>
-        <option value="sort">Task 2: sorting</option>
-        <option value="tilt" selected>Task 3: tilt and pour</option>
       </select>
       <button id="makeTest">Create test link</button>
       <span class="muted">phone pairing, then only that part (no verdict; batch "Testing")</span>
@@ -73,7 +70,7 @@
     <thead><tr>
       <th data-k="name">Name</th><th data-k="code">Code</th><th data-k="batch">Batch</th><th data-k="status">Status</th>
       <th data-k="phase">Phase</th><th data-k="reach_efficiency">Reach eff.</th>
-      <th data-k="shapes">Task 1</th><th data-k="sort">Task 2</th><th data-k="tilt">Task 3</th><th data-k="overall">Overall</th><th data-k="pass">Result</th>
+      <th id="taskCols" style="display:none"></th><th data-k="overall">Overall</th><th data-k="pass">Result</th>
       <th data-k="started">Started</th><th></th>
     </tr></thead>
     <tbody id="rows"></tbody>
@@ -90,9 +87,27 @@ async function load() {
   data = await r.json();
   $('publicUrl').innerHTML = data.public_url ? `<a href="${data.public_url}" style="color:#8bf">${data.public_url}</a>`
     : (data.tunnel ? 'starting the tunnel…' : 'no tunnel (start the lobby with --tunnel, or use start_screening.bat)');
+  const cfg = data.config;
+  $('configPath').textContent = data.config_path;
+  $('configError').style.display = data.config_error ? '' : 'none';
+  $('configError').textContent = data.config_error ? 'The configuration file has problems (the last good version is used):\n' + data.config_error : '';
   if (!settingsLoaded) {
-    $('passScore').value = data.settings.pass_score;
-    $('reqPractice').checked = data.settings.require_practice;
+    $('passScore').value = cfg.pass_mark;
+    const tasks = cfg.phases.filter(p => p.kind === 'task');
+    $('mustComplete').innerHTML = tasks.filter(p => !p.scored).map(p =>
+      `<label><input type="checkbox" class="must" value="${esc(p.key)}" ${cfg.must_complete.includes(p.key) ? 'checked' : ''}> ${esc(p.title)} must be completed</label>`).join(' ');
+    $('onlyPart').innerHTML = tasks.map((p, i) =>
+      `<option value="${esc(p.key)}" ${i === tasks.length - 1 ? 'selected' : ''}>${esc(p.title)}</option>`).join('');
+    // a score column per scored task, after "Reach eff."
+    document.querySelectorAll('th.task').forEach(th => th.remove());
+    const anchor = $('taskCols');
+    for (const p of tasks.filter(p => p.scored)) {
+      const th = document.createElement('th');
+      th.className = 'task'; th.dataset.k = p.key; th.textContent = p.title.split(':')[0];
+      th.title = p.title;
+      th.onclick = () => sortBy(p.key);
+      anchor.before(th);
+    }
     settingsLoaded = true;
   }
   render();
@@ -114,21 +129,20 @@ function render() {
     <td><span class="st ${r.status}">${r.status}${r.running ? ' ●' : ''}</span></td>
     <td>${esc(r.phase || '')}</td>
     <td class="num">${num(r.reach_efficiency, 2)}</td>
-    <td class="num">${num(r.shapes)} <span class="muted">${r.shapes_steps}</span></td>
-    <td class="num">${num(r.sort)} <span class="muted">${r.sort_steps}</span></td>
-    <td class="num">${num(r.tilt)} <span class="muted">${r.tilt_steps}</span></td>
+    ${data.config.phases.filter(p => p.scored).map(p =>
+      `<td class="num">${num(r[p.key])} <span class="muted">${r[p.key + '_steps'] || ''}</span></td>`).join('')}
     <td class="num"><b>${num(r.overall)}</b></td>
     <td>${r.pass === true ? '<span class="pass">PASS</span>' : r.pass === false ? '<span class="fail">FAIL</span>' : ''}</td>
     <td>${esc(r.started || '')}</td>
     <td>${r.status !== 'new' ? `<button class="secondary" onclick="retake('${r.code}')" title="Let this candidate take the test again (the old attempt is kept)">Allow retake</button>` : ''}</td>
   </tr>`).join('');
 }
-document.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => {
-  const k = th.dataset.k;
+function sortBy(k) {
   sortDir = sortKey === k ? -sortDir : -1;
   sortKey = k;
   render();
-});
+}
+document.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => sortBy(th.dataset.k));
 async function retake(code) {
   if (!confirm(`Let ${code} take the test again? Their current attempt is kept in its folder, renamed.`)) return;
   await fetch(`/admin/reset/${code}`, { method: 'POST' });
@@ -147,16 +161,18 @@ $('makeTest').onclick = async () => {
   const only = $('onlyPart').value;
   const r = await fetch('/admin/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: 'Testing', n: 1, only }) });
+  if (!r.ok) { $('testLink').textContent = await r.text(); return; }
   const j = await r.json();
   const base = data.public_url || '(public address)';
   $('testLink').innerHTML = `Test link (${only} only): <a style="color:#8bf" href="${base}/?code=${j.codes[0]}">${base}/?code=${j.codes[0]}</a>`;
   load();
 };
 $('saveSettings').onclick = async () => {
-  await fetch('/admin/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pass_score: +$('passScore').value, require_practice: $('reqPractice').checked }) });
-  $('saved').textContent = 'saved';
-  setTimeout(() => $('saved').textContent = '', 1500);
+  const r = await fetch('/admin/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pass_mark: +$('passScore').value,
+                           must_complete: [...document.querySelectorAll('.must:checked')].map(x => x.value) }) });
+  $('saved').textContent = r.ok ? 'saved' : 'not saved: ' + await r.text();
+  setTimeout(() => $('saved').textContent = '', r.ok ? 1500 : 8000);
   load();
 };
 load();

@@ -11,9 +11,11 @@ Candidate:  /                 enter invite code + name, consent
             /m/<code>         the phone controller (Chrome on Android, WebXR motion tracking)
 You:        /admin            results, ranking, pass / fail, new invite codes (this PC only)
 
-Data: data/screening/candidates.json (codes, names, status), data/screening/settings.json
-(pass threshold), and per candidate data/screening/<batch>/<code>/screen/attempt/
-(results.json, one episode file per phase, the simulator's log).
+The test itself (phases, objects, scoring, pass mark): config/screening.toml (see
+TEST_TELEOP/config.py). Data: data/screening/candidates.json (codes, names, status),
+data/screening/settings.json (how many at a time, idle timeout), and per candidate
+data/screening/<batch>/<code>/screen/attempt/ (results.json, the configuration it ran with,
+one episode file per phase, the simulator's log).
 """
 from __future__ import annotations
 
@@ -36,14 +38,15 @@ from aiohttp import WSMsgType, web
 
 from vrteleop import scene as S
 
+from . import config as C
+
 ROOT = S.ROOT
 WEB_DIR = ROOT / "vrteleop" / "web"                  # the 3D viewer (main.js) and three.js
 TEST_WEB = Path(__file__).resolve().parent / "web"   # this test's pages
 DATA = ROOT / "data" / "screening"
 CANDIDATES = DATA / "candidates.json"
 SETTINGS = DATA / "settings.json"
-DEFAULT_SETTINGS = {"pass_score": 50.0, "require_practice": True, "scale": 1.5,
-                    "max_concurrent": 15, "idle_timeout_min": 20}
+DEFAULT_SETTINGS = {"max_concurrent": 15, "idle_timeout_min": 20}
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"     # no 0/O, 1/I
 
 
@@ -80,7 +83,26 @@ def _save(path: Path, obj):
 
 
 def settings() -> dict:
-    return {**DEFAULT_SETTINGS, **_load(SETTINGS, {})}
+    st = _load(SETTINGS, {})
+    return {k: st.get(k, v) for k, v in DEFAULT_SETTINGS.items()}
+
+
+def cfg() -> C.Config:
+    """The test's configuration (read again when the file changes). If it was edited into a
+    broken state, the last good one is used and the problems are shown on the admin page."""
+    try:
+        c = C.cached()
+        _cfg_state.update(good=c, error=None)
+    except C.ConfigError as e:
+        if _cfg_state["error"] != str(e):
+            print(f"[lobby] {e}")
+        _cfg_state["error"] = str(e)
+        if _cfg_state["good"] is None:
+            raise
+    return _cfg_state["good"]
+
+
+_cfg_state = {"good": None, "error": None}
 
 
 def candidates() -> dict:
@@ -89,6 +111,8 @@ def candidates() -> dict:
 
 def new_batch(name: str, n: int, only: str | None = None) -> list[str]:
     """n invite codes. only: a phase key (e.g. "tilt"): a test code that runs just that part."""
+    if only and only not in [p.key for p in cfg().task_phases]:
+        raise ValueError(f"no task phase '{only}'")
     cands = candidates()
     codes = []
     for _ in range(n):
@@ -113,13 +137,14 @@ def results_of(code: str, c: dict) -> dict | None:
     return _load(p, None)
 
 
-def passed(res: dict | None, st: dict) -> bool | None:
+def passed(res: dict | None) -> bool | None:
+    """Overall >= the pass mark and every must_complete phase completed (config [scoring])."""
     if not res or not res.get("finished") or res.get("only"):     # (a test of one part: no verdict)
         return None
-    sc = res.get("scores", {})
-    ok = sc.get("overall", 0) >= st["pass_score"]
-    if st["require_practice"]:
-        ok = ok and bool(res.get("metrics", {}).get("reach", {}).get("completed"))
+    sc, c = res.get("scores", {}), cfg()
+    ok = sc.get("overall", 0) >= c.scoring["pass_mark"]
+    for k in c.scoring["must_complete"]:
+        ok = ok and bool(res.get("metrics", {}).get(k, {}).get("completed"))
     return ok
 
 
@@ -177,7 +202,7 @@ def _free_port() -> int:
 class Worker:
     """One simulator process (TEST_TELEOP.worker --task screen) for one candidate."""
 
-    def __init__(self, code: str, c: dict, scale: float):
+    def __init__(self, code: str, c: dict):
         self.code = code
         self.port = _free_port()
         self.dir = session_dir(code, c)
@@ -190,7 +215,7 @@ class Worker:
              # 60 pose updates a second (~100 KB/s per candidate): less delay on top of the
              # internet's (the monitor shows the arm one update behind, interpolated)
              "--stream-hz", "60", "--data-dir", str(self.dir), "--session", "attempt",
-             "--operator", c.get("name") or code, "--scale", str(scale), "--exit-when-idle", "25"],
+             "--operator", c.get("name") or code, "--exit-when-idle", "25"],
             cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT, env=env)
         self.clients = 0
         self.last_seen = time.time()
@@ -332,7 +357,7 @@ def make_app(args) -> web.Application:
         busy = sum(1 for x in workers.values() if x.alive())
         if busy >= st["max_concurrent"]:
             raise web.HTTPServiceUnavailable(text="All test places are busy right now. Please try again in a few minutes.")
-        w = Worker(code, c, st["scale"])
+        w = Worker(code, c)
         workers[code] = w
         if not await w.ready(http["s"]):
             raise web.HTTPInternalServerError(text="The simulator didn't start. Please tell the organiser.")
@@ -391,7 +416,8 @@ def make_app(args) -> web.Application:
 
     def static_page(file, code):
         text = (TEST_WEB / file).read_text(encoding="utf-8")
-        text = text.replace("__CODE__", code).replace("__BOOT__", str(app["boot"]))
+        text = (text.replace("__CODE__", code).replace("__BOOT__", str(app["boot"]))
+                .replace("__CONFIG__", json.dumps(cfg().public())))
         return web.Response(text=text, content_type="text/html", headers={"Cache-Control": "no-store"})
 
     async def play(request):
@@ -471,29 +497,31 @@ def make_app(args) -> web.Application:
         return web.FileResponse(TEST_WEB / "admin.html", headers={"Cache-Control": "no-store"})
 
     def rows():
-        st = settings()
+        c = cfg()
+        practice = [p.key for p in c.task_phases if not p.scored]
         out = []
-        for code, c in candidates().items():
-            res = results_of(code, c)
+        for code, cand in candidates().items():
+            res = results_of(code, cand)
             sc = (res or {}).get("scores", {})
             mt = (res or {}).get("metrics", {})
-            out.append({"code": code, "batch": c["batch"], "name": c.get("name", ""), "status": c["status"],
-                        "phase": (res or {}).get("phase"), "started": c.get("started"),
-                        "finished": c.get("finished") or (res or {}).get("finished_at"),
-                        "practice_done": bool(mt.get("reach", {}).get("completed")) and bool(mt.get("pick", {}).get("completed")),
-                        "reach_efficiency": sc.get("reach_efficiency"),
-                        "shapes": sc.get("shapes"), "sort": sc.get("sort"), "tilt": sc.get("tilt"),
-                        "overall": sc.get("overall"),
-                        "pass": passed(res, st),
-                        "shapes_steps": f"{mt['shapes']['steps_done']}/{mt['shapes']['steps_total']}" if "shapes" in mt else "",
-                        "sort_steps": f"{mt['sort']['steps_done']}/{mt['sort']['steps_total']}" if "sort" in mt else "",
-                        "tilt_steps": f"{mt['tilt']['steps_done']}/{mt['tilt']['steps_total']}" if "tilt" in mt else "",
-                        "folder": _rel(session_dir(code, c)),
-                        "running": code in workers and workers[code].alive(), "only": c.get("only")})
+            r = {"code": code, "batch": cand["batch"], "name": cand.get("name", ""), "status": cand["status"],
+                 "phase": (res or {}).get("phase"), "started": cand.get("started"),
+                 "finished": cand.get("finished") or (res or {}).get("finished_at"),
+                 "practice_done": all(mt.get(k, {}).get("completed") for k in practice),
+                 "reach_efficiency": sc.get("reach_efficiency")}
+            for p in c.scored_phases:           # a score and steps column per scored task
+                r[p.key] = sc.get(p.key)
+                r[f"{p.key}_steps"] = f"{mt[p.key]['steps_done']}/{mt[p.key]['steps_total']}" if p.key in mt else ""
+            r.update({"overall": sc.get("overall"), "pass": passed(res), "config": (res or {}).get("config_sha"),
+                      "folder": _rel(session_dir(code, cand)),
+                      "running": code in workers and workers[code].alive(), "only": cand.get("only")})
+            out.append(r)
         return out
 
     async def admin_api(_):
-        return web.json_response({"settings": settings(), "candidates": rows(),
+        c = cfg()
+        return web.json_response({"settings": settings(), "candidates": rows(), "config": c.public(),
+                                  "config_path": _rel(c.path), "config_error": _cfg_state["error"],
                                   "public_url": public_url(), "tunnel": bool(args.tunnel)})
 
     async def admin_csv(_):
@@ -508,18 +536,34 @@ def make_app(args) -> web.Application:
 
     async def admin_batch(request):
         body = await request.json()
-        codes = new_batch(str(body.get("name") or time.strftime("%Y-%m-%d")), int(body.get("n", 15)),
-                          body.get("only") or None)
+        try:
+            codes = new_batch(str(body.get("name") or time.strftime("%Y-%m-%d")), int(body.get("n", 15)),
+                              body.get("only") or None)
+        except ValueError as e:
+            raise web.HTTPBadRequest(text=str(e))
         return web.json_response({"codes": codes})
 
     async def admin_settings(request):
+        """Lobby settings (settings.json) and the pass rule, which lives in the test's
+        configuration ([scoring] pass_mark, must_complete: saved into the file, comments kept)."""
         body = await request.json()
         st = settings()
         for k in DEFAULT_SETTINGS:
             if k in body:
                 st[k] = type(DEFAULT_SETTINGS[k])(body[k])
         _save(SETTINGS, st)
-        return web.json_response(st)
+        upd = {}
+        if "pass_mark" in body:
+            v = float(body["pass_mark"])
+            upd[("scoring", "pass_mark")] = int(v) if v.is_integer() else v
+        if "must_complete" in body:
+            upd[("scoring", "must_complete")] = [str(x) for x in body["must_complete"]]
+        if upd:
+            try:
+                C.set_values(upd, cfg().path)
+            except C.ConfigError as e:
+                raise web.HTTPBadRequest(text="\n".join(e.problems))
+        return web.json_response({"settings": st, "config": cfg().public()})
 
     async def admin_reset(request):
         """Let a candidate take the test again (keeps the old attempt's files, renamed)."""
@@ -590,6 +634,12 @@ def main(argv=None):
         ctypes.windll.winmm.timeBeginPeriod(1)
     if not SETTINGS.exists():
         _save(SETTINGS, DEFAULT_SETTINGS)
+    try:
+        c = cfg()
+    except C.ConfigError as e:
+        print(f"\n  The test's configuration has problems; fix them and start again:\n{e}\n")
+        sys.exit(1)
+    print(f"  Test configuration: {_rel(c.path)} ({len(c.task_phases)} phases)")
     print(f"\n  Screening lobby: http://localhost:{a.port}   (results: http://localhost:{a.port}/admin)")
     if a.tunnel:
         print("  Starting the public tunnel (its address appears below and on the admin page)...")
