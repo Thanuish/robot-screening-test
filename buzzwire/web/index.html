@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Robot Buzz Wire</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1014; color: #e9ecf1;
+      font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    canvas { display: block; }
+    .panel { position: fixed; background: rgba(14,16,20,.72); border: 1px solid rgba(255,255,255,.08);
+      border-radius: 12px; padding: 10px 14px; backdrop-filter: blur(6px); }
+    #level { top: 12px; left: 12px; max-width: min(460px, 60vw); }
+    #level h1 { font-size: 18px; margin: 0 0 4px; } #level p { margin: 0; color: #b8bec9; font-size: 14px; }
+    #stats { top: 12px; right: 12px; text-align: right; min-width: 150px; }
+    #timer { font: 700 30px/1 ui-monospace, Menlo, Consolas, monospace; }
+    #touches { font-size: 15px; margin-top: 4px; } #touches b { font-size: 20px; }
+    #progress { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(520px, 70vw);
+      height: 10px; border-radius: 6px; background: rgba(255,255,255,.12); overflow: hidden; }
+    #progress div { height: 100%; width: 0; background: linear-gradient(90deg, #3aa0ff, #4cd07d); transition: width .2s; }
+    #count { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      font: 900 120px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 4px 30px rgba(0,0,0,.6); pointer-events: none; }
+    #flash { position: fixed; inset: 0; pointer-events: none; box-shadow: inset 0 0 120px 30px rgba(255,40,40,.85);
+      opacity: 0; transition: opacity .08s; }
+    #toast { position: fixed; top: 22%; left: 50%; transform: translateX(-50%); font: 800 34px/1.2 system-ui, sans-serif;
+      text-shadow: 0 3px 20px rgba(0,0,0,.7); opacity: 0; transition: opacity .3s; pointer-events: none; text-align: center; }
+    #side { bottom: 12px; right: 12px; width: 190px; font-size: 12px; color: #b8bec9; }
+    #side img { width: 100%; background: #fff; border-radius: 8px; }
+    #side a { color: #8bf; word-break: break-all; }
+    #keys { bottom: 12px; left: 12px; font-size: 12px; color: #b8bec9; }
+    #keys b { color: #e9ecf1; } #keys.on { border-color: #3aa0ff; }
+    #net { position: fixed; top: 2px; left: 50%; transform: translateX(-50%); font-size: 11px; color: #777; }
+    #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: #889; }
+  </style>
+  <script type="importmap">
+  { "imports": { "three": "/vendor/three/build/three.module.js",
+                 "three/addons/": "/vendor/three/examples/jsm/" } }
+  </script>
+</head>
+<body>
+  <div id="loading">Loading…</div>
+  <div class="panel" id="level"><h1 id="title">Robot Buzz Wire</h1><p id="text"></p></div>
+  <div class="panel" id="stats"><div id="timer">0:00</div><div id="touches">touches <b id="nTouch">0</b></div>
+    <button id="restart" style="margin-top:8px;background:#2a2f39;color:#ddd;border:1px solid #444;border-radius:8px;padding:5px 10px;cursor:pointer">Restart</button></div>
+  <div id="progress"><div id="bar"></div></div>
+  <div id="count"></div>
+  <div id="flash"></div>
+  <div id="toast"></div>
+  <div class="panel" id="side"><div><b>Phone controller</b></div><img id="qr" alt=""><div id="phoneUrl"></div></div>
+  <div class="panel" id="keys">
+    <b>Keyboard</b> (click the view first): <b>W A S D</b> move, <b>R / F</b> up / down, <b>Q / E</b> turn,
+    <b>I / K</b> tilt, <b>J / L</b> twist, <b>C</b> grab / release, <b>Shift</b> slow.
+    Mouse: drag to look around, wheel to zoom.
+  </div>
+  <div id="net"></div>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

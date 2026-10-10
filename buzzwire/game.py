@@ -131,7 +131,9 @@ class Game:
         self.teleop.reset(*self.ik.fk(self.q_cmd))
         self.follow = Follower(self.cfg)
         self.tick = 0
-        self.state = "countdown"
+        # the first level waits for a controller (the phone or the keyboard), then counts down
+        self.state = "waiting" if self.li == 0 else "countdown"
+        self._count_from = 0
         self.t_play = None
         self.touching = False
         self._last_touch_t = -1e9
@@ -168,9 +170,13 @@ class Game:
             self.input_log[self.level.key].append([self.tick, ctrl])
             self._logged = key
         d, sc = self.d, self.sc
-        if self.state == "countdown":
+        if self.state == "waiting":
+            ctrl = None
+            if (self._controller() or {}).get("pose"):
+                self.state, self._count_from = "countdown", self.tick
+        elif self.state == "countdown":
             ctrl = None                                     # the arm waits for the start
-            if self.tick * self.dt >= COUNTDOWN_S:
+            if (self.tick - self._count_from) * self.dt >= COUNTDOWN_S:
                 self.state, self.t_play = "play", d.time
         if ctrl is not None and self.level.rotation == "yaw" and ctrl.get("pose"):
             ctrl = dict(ctrl, pose=list(ctrl["pose"][:3]) + list(_yaw_only(ctrl["pose"][3:7])))
@@ -295,7 +301,7 @@ class Game:
 
     def status(self) -> dict:
         lv, mt = self.level, self.metrics
-        countdown = max(0.0, COUNTDOWN_S - self.tick * self.dt) if self.state == "countdown" else 0.0
+        countdown = max(0.0, COUNTDOWN_S - (self.tick - self._count_from) * self.dt) if self.state == "countdown" else 0.0
         st = dict(level=lv.key, index=self.li, count=len(self.levels), title=lv.title, text=lv.text,
                   state=self.state, countdown=round(countdown, 1), time=mt["time_s"], limit=lv.limit,
                   touches=mt["touches"], touching=self.touching, progress=mt["progress"], held=self.held(),

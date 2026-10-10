@@ -118,7 +118,8 @@ class Bot:
         g = self.g
         lv, cfg, key = g.level, g.cfg, g.level.key
         full = lv.rotation == "full"
-        while g.state == "countdown" and not g.finished:
+        self._send()                                     # (the first level waits for a controller)
+        while g.state in ("waiting", "countdown") and not g.finished:
             self.run_ticks(1)
         self.engage()
         # the handle on the start rest: approach from above, close, lift until the loop is centred
