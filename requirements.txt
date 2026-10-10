@@ -10,3 +10,6 @@ Pillow>=10
 segno>=1.6
 # writing config/screening.toml back without losing its comments (admin page, lab)
 tomlkit>=0.12
+# Robot Buzz Wire: kinematics and inverse kinematics (UR5e from the same MJCF as the physics)
+pin>=3.4
+proxsuite>=0.6

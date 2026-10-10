@@ -1,0 +1,122 @@
+# =============================================================================================
+#  Robot Buzz Wire: configuration
+# =============================================================================================
+#  Guide a ring along a curved wire with the robot, without touching the wire.
+#  Everything about the game is defined here. Check it with
+#
+#      python -m buzzwire.check_config
+#
+#  Units: metres, degrees, seconds, kilograms. Positions are in the room:
+#      x = forward, away from the robot (its base is at x = 0)
+#      y = to the robot's left
+#      z = up from the floor (the table top is at z = 0.75)
+#  Wire points are given relative to the wire board's centre: [forward, left, up].
+# =============================================================================================
+
+version = 1
+
+# ---------------------------------------------------------------------------- the robot
+[robot]
+model = "ur5e"                 # "ur5e": Universal Robots UR5e (MuJoCo Menagerie); more later
+gripper = "robotiq_2f85"       # "robotiq_2f85": Robotiq 2F-85 two-finger gripper
+base = [0.0, 0.0]              # where its base stands on the table [x, y]
+# start pose (shoulder pan, shoulder lift, elbow, wrist 1, 2, 3): gripper pointing down,
+# about 30 cm in front of the base
+home_deg = [0.0, -100.0, 110.0, -100.0, -90.0, 0.0]
+max_speed = 0.3                # [m/s] top speed of the gripper (a real UR5e can do 1.0)
+max_turn_deg = 90              # [deg/s] top turning speed of the gripper
+joint_speed_deg = 120          # [deg/s] top speed of each joint
+table_clearance = 0.03         # the wrist and gripper keep at least this far above the table [m]
+
+[controls]
+motion_scale = 1.0             # the robot moves this many cm per cm the phone moves
+smoothing_s = 0.1              # smooths the phone's motion (it sends ~30 positions a second); 0 = off
+
+# ---------------------------------------------------------------------------- physics
+[physics]
+timestep = 0.002               # [s] one physics step (500 per second)
+control_hz = 100               # the arm's target is updated this often
+touch_debounce_s = 0.05        # contact lost for less than this still counts as one touch
+
+# ---------------------------------------------------------------------------- what the player sees
+[view]
+eye = [-0.35, 0.0, 1.45]       # camera position [x, y, z]: behind and above the robot base
+look_at = [0.50, 0.0, 0.85]    # the point it looks at
+fov_deg = 50
+
+# ---------------------------------------------------------------------------- the board, wire and wand
+[board]                        # the wooden base the wire posts stand on
+center = [0.50, 0.0]           # [x, y] on the table
+size = [0.16, 0.56, 0.02]      # [depth, width, thickness]
+
+[wire]
+radius = 0.0015                # the metal wire is 3 mm thick
+sleeve_length = 0.045          # a rubber sleeve on each end: touching it doesn't count
+sleeve_radius = 0.004
+post_radius = 0.006            # the posts holding the wire's ends
+
+[wand]                         # a handle with a loop at its front end; the loop goes around the wire
+loop_radius = 0.02             # from the loop's centre to the middle of its metal [m]: the default; levels can change it
+loop_thickness = 0.004         # the loop's metal is this thick
+loop_segments = 24             # the loop is made of this many short pieces
+handle_size = [0.12, 0.014, 0.014]   # [length, width, height]; the gripper holds it
+handle_mass = 0.04
+loop_mass = 0.01
+friction = [1.5, 0.02, 0.002]  # sliding, twisting, rolling (a rubber-coated handle)
+
+# ---------------------------------------------------------------------------- scoring
+# Per level, 0 to 100:
+#     progress    x how far along the wire the ring got (1 = hung on the end hook)
+#   + no_touches  x (1 - touches / touches_to_zero)
+#   + touch_time  x (1 - seconds touching / touch_seconds_to_zero)
+#   + time        x time left / time limit        (only if completed)
+#   + smoothness  x 1 at rms jerk <= smooth_jerk, 0 at >= jerky_jerk (m/s^3), in between linear
+# Overall = the mean of the scored levels; pass = overall >= pass_mark.
+[scoring]
+progress = 40
+no_touches = 25
+touch_time = 15
+time = 10
+smoothness = 10
+touches_to_zero = 10
+touch_seconds_to_zero = 5.0
+smooth_jerk = 5.0
+jerky_jerk = 60.0
+pass_mark = 50
+
+# ---------------------------------------------------------------------------- levels
+# In order. Each level:
+#   points         the wire's shape: [forward, left, up] from the board's centre, start to end
+#                  (a smooth curve is drawn through them). Start on the right (negative "left").
+#   rotation       "yaw": the gripper turns left/right only and keeps pointing down;
+#                  "full": it also tilts and twists with the phone (six degrees of freedom)
+#   time_limit_s, scored (false = practice), loop_radius (optional: a smaller loop is harder)
+
+[[levels]]
+key = "straight"
+title = "Level 1: straight"
+text = "Pick up the wand, guide the loop along the wire to the other end without touching it, and hang the wand on the end hook."
+scored = false
+time_limit_s = 120
+rotation = "yaw"
+points = [[0.0, -0.20, 0.13], [0.0, 0.20, 0.13]]
+
+[[levels]]
+key = "curves"
+title = "Level 2: curves"
+text = "The wire bends left and right. Turn the wand with your hand to follow it."
+scored = true
+time_limit_s = 150
+rotation = "yaw"
+points = [[0.0, -0.22, 0.13], [0.02, -0.13, 0.13], [-0.025, -0.03, 0.13], [0.025, 0.07, 0.13],
+          [-0.01, 0.16, 0.13], [0.0, 0.22, 0.13]]
+
+[[levels]]
+key = "space"
+title = "Level 3: up and down"
+text = "Now the wire also goes up and down. Tilt and twist your hand to keep the loop around it."
+scored = true
+time_limit_s = 180
+rotation = "full"
+points = [[0.0, -0.22, 0.13], [0.015, -0.13, 0.16], [-0.015, -0.04, 0.12], [0.015, 0.06, 0.17],
+          [-0.01, 0.15, 0.13], [0.0, 0.22, 0.14]]
