@@ -153,7 +153,10 @@ class Server:
             ws = web.WebSocketResponse(heartbeat=15, max_msg_size=1 << 20)
             await ws.prepare(request)
             self.clients.add(ws)
+            who = "phone" if "Android" in request.headers.get("User-Agent", "") else "browser"
+            print(f"[ws] {who} connected ({len(self.clients)} open)", flush=True)
             await ws.send_str(json.dumps(self.status()))
+            n_in = 0
             try:
                 async for msg in ws:
                     if msg.type != WSMsgType.TEXT:
@@ -165,6 +168,11 @@ class Server:
                     t = m.get("type")
                     if t == "input":
                         self.game.set_input(m)
+                        n_in += 1
+                        if n_in in (1, 100) or n_in % 1000 == 0:
+                            c = m.get("right") or {}
+                            print(f"[input] {who}: {n_in} messages; MOVE {c.get('grip')} GRAB {c.get('stick')} "
+                                  f"state {self.game.state}", flush=True)
                     elif t == "view":
                         self.game.view_yaw = float(m.get("yaw", 0.0))
                     elif t == "ping":
@@ -173,6 +181,7 @@ class Server:
                         self.new_game()
             finally:
                 self.clients.discard(ws)
+                print(f"[ws] {who} disconnected", flush=True)
             return ws
 
         app.router.add_get("/", index)

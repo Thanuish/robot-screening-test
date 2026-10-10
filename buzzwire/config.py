@@ -177,8 +177,8 @@ def parse(raw: dict, p="<config>") -> Config:
         c.err("physics", f"1 / (control_hz x timestep) should be a whole number of physics steps, got {steps:.3f}")
     v = raw.get("view", {})
     c.keys(v, "view", ("eye", "look_at", "fov_deg"))
-    view = dict(eye=c.vec(v, "eye", "view", 3, [-0.35, 0.0, 1.45]), look=c.vec(v, "look_at", "view", 3, [0.5, 0.0, 0.85]),
-                fov=c.num(v, "fov_deg", "view", 50, lo=20, hi=120))
+    view = dict(eye=c.vec(v, "eye", "view", 3, [1.15, -0.30, 1.22]), look=c.vec(v, "look_at", "view", 3, [0.47, 0.0, 0.87]),
+                fov=c.num(v, "fov_deg", "view", 42, lo=20, hi=120))
     b = raw.get("board", {})
     c.keys(b, "board", ("center", "size"))
     board = dict(center=c.vec(b, "center", "board", 2, [0.5, 0.0]), size=c.vec(b, "size", "board", 3, [0.16, 0.56, 0.02], lo=0.005))
