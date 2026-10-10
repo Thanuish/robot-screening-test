@@ -1,6 +1,7 @@
 """A bot plays the screening test through the same messages a phone sends, in simulation time:
-pairing, the two practice rounds, task 1 (shapes) and task 2 (sorting). Checks that every
-task can be done and prints the metrics and scores. Pictures: --pics DIR.
+every phase of config/screening.toml, step by step (reach, pick and place into zones,
+outlines and bins, take a book out of its holder and lay it flat, pour from a cup and set it
+upright). Checks that every task can be done and prints the metrics and scores. Pictures: --pics DIR.
 
     python -m TEST_TELEOP.screen_bot
     python -m TEST_TELEOP.screen_bot --skip shapes      # leave a task undone (tests partial scores)
@@ -25,7 +26,6 @@ from TEST_TELEOP import screen_scene as SS  # noqa: E402
 from vrteleop import scene as S  # noqa: E402
 from vrteleop.server import TeleopSim, build_parser  # noqa: E402
 
-SIDE = SS.ARM
 HAND0 = np.array([0.0, -0.25, 1.1])        # where the "phone" is when the bot starts
 
 
@@ -44,57 +44,70 @@ def _rx(a):
     return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
 
 
-def do_tilt(bot, pour_angle=np.radians(130)):
-    """Task 3 the way a person would: book out of the holder by its top edge, tilted 90 deg and
-    laid flat on the mat; cup taken by its rim, tipped over the bowl, set down upright."""
+def do_book(bot, n, holder, zone, tilt=+1, turn=-1):
+    """Take book n out of its holder by its top edge, turn it a quarter turn and tilt the gripper
+    sideways so the book lies flat, and set it down in zone. tilt +1: the fingers point to +y
+    (the book sticks out away from the arm, the wrist stays on the arm's side: the arm needn't
+    stretch); -1 (toward -y) reaches the mat only just, the arm fully stretched. Tilted forward
+    instead, the wrist hits the table 16 cm up."""
     Z = S.TABLE_Z
-    g = bot.game
-    # the plate: fingers across its thickness (world x): the hand turned 90 deg
-    rx, ry = SS.RACK
+    g, cfg = bot.game, SS.CFG
+    # the book: fingers across its thickness (world x): the hand turned 90 deg
+    rx, ry = cfg.markers[holder].pos
+    top = Z + 2 * cfg.objects[n].half[0]               # standing: its top edge
     Rg = _rz(np.pi / 2)
     bot.move_pose((rx, ry, Z + 0.22), Rg, 1.5)
-    bot.move_pose((rx, ry, Z + 0.105), Rg, 1.0)
+    bot.move_pose((rx, ry, top - 0.015), Rg, 1.0)
     bot.gripper(True)
     bot.move_pose((rx, ry, Z + 0.27), Rg, 1.2)
-    print(f"  plate lifted: held {g.held['plate']}")
-    # turn the book a quarter turn, then tilt the gripper sideways: the book lies flat and the
-    # wrist stays beside it (tilted forward instead, the wrist hits the table 16 cm up)
-    Rflat = _rx(-np.pi / 2) @ _rz(-np.pi / 2) @ Rg
-    mx, my = SS.MAT
+    print(f"  {n} lifted: held {g.held[n]}")
+    Rflat = _rx(tilt * np.pi / 2) @ _rz(turn * np.pi / 2) @ Rg
+    fingers = _rx(tilt * np.pi / 2) @ np.array([0, 0, -1.0])     # where the fingers point now
+    mx, my = cfg.markers[zone].pos
     bot.move_pose((mx, my, Z + 0.25), Rflat, 2.0)
-    p, _, _ = g._obj("plate")
+    p, _, _ = g._obj(n)
     off = p - g.ee()                                   # the book's middle, seen from the gripper
     bot.move_pose((mx - off[0], my - off[1], Z + 0.25), Rflat, 0.8)
     bot.move_pose((mx - off[0], my - off[1], Z + 0.075), Rflat, 1.2)
     bot.gripper(False, 0.7)
-    # back out along the fingers (they point -y, at the book) and up, without touching it
-    bot.move_pose((mx - off[0], my - off[1] + 0.06, Z + 0.09), Rflat, 0.8)
-    bot.move_pose((mx - off[0], my - off[1] + 0.06, Z + 0.20), Rflat, 0.8)
+    # back out along the fingers and up, without touching the book
+    back = -0.06 * fingers
+    bot.move_pose((mx - off[0] + back[0], my - off[1] + back[1], Z + 0.09), Rflat, 0.8)
+    bot.move_pose((mx - off[0] + back[0], my - off[1] + back[1], Z + 0.20), Rflat, 0.8)
     bot.advance(0.5)
-    p, _, v = g._obj("plate")
-    print(f"  book: {g.tilt_done}  (at {np.round(p - [mx, my, Z], 3)} from the mat centre, "
-          f"normal z {abs(g._axis_z('plate')[2]):.2f}, held {g.held['plate']}, speed {v:.2f})")
-    # the cup: fingers on both sides of its wall (inner finger inside the cup)
-    bot.move_pose((0.45, -0.10, Z + 0.25), np.eye(3), 1.5)
-    cx, cy = SS.OBJECTS["cup"][3]
-    wall = SS.OBJECTS["cup"][1][0] - SS.CUP_WALL / 2
+    p, _, v = g._obj(n)
+    print(f"  {n}: {g.metrics[g.phase.key].get('done_steps')}  (at {np.round(p - [mx, my, Z], 3)} from the "
+          f"zone centre, normal z {abs(g._thin_axis(n)[2]):.2f}, held {g.held[n]}, speed {v:.2f})")
+
+
+def do_pour(bot, cup, container, pour_angle=np.radians(130)):
+    """Cup taken by its rim (inner finger inside), tipped over the container, set down upright."""
+    Z = S.TABLE_Z
+    g, cfg = bot.game, SS.CFG
+    o = cfg.objects[cup]
+    cx, cy = o.start
+    wall = o.half[0] - o.cup_wall / 2
+    rim = Z + 2 * o.half[1]
+    bot.move_pose((cx + 0.03, cy + 0.04, Z + 0.25), np.eye(3), 1.5)
     bot.move_pose((cx, cy + wall, Z + 0.22), np.eye(3), 1.2)
-    bot.move_pose((cx, cy + wall, Z + 0.085), np.eye(3), 1.0)
+    bot.move_pose((cx, cy + wall, rim - 0.005), np.eye(3), 1.0)
     bot.gripper(True)
     bot.move_pose((cx, cy + wall, Z + 0.26), np.eye(3), 1.2)
-    print(f"  cup lifted: held {g.held['cup']}")
-    bx, by = SS.BOWL
+    print(f"  {cup} lifted: held {g.held[cup]}")
+    bx, by = cfg.markers[container].pos
     bot.move_pose((bx, by + wall, Z + 0.24), np.eye(3), 1.5)
     bot.move_pose((bx, by + wall + 0.02, Z + 0.24), _rx(pour_angle), 2.0)     # tip it over
     bot.advance(1.5)
-    print(f"  poured: {g.metrics['tilt'].get('balls_in_bowl')} balls in the bowl")
+    print(f"  poured: {g.metrics[g.phase.key].get('poured')} into the {container}")
     bot.move_pose((bx, by + wall, Z + 0.24), np.eye(3), 1.5)
-    bot.move_pose((0.46, -0.08, Z + 0.20), np.eye(3), 1.5)
-    bot.move_pose((0.46, -0.08, Z + 0.09), np.eye(3), 1.0)
+    dx, dy = cx + 0.04, cy + 0.06                       # set it down near where it was
+    bot.move_pose((dx, dy, Z + 0.20), np.eye(3), 1.5)
+    bot.move_pose((dx, dy, Z + 0.09), np.eye(3), 1.0)
     bot.gripper(False, 0.7)
-    bot.move_pose((0.46, -0.08, Z + 0.25), np.eye(3), 1.0)
+    bot.move_pose((dx, dy, Z + 0.25), np.eye(3), 1.0)
     bot.advance(1.0)
-    print(f"  steps: {g.tilt_done if g.phase['key'] == 'tilt' else 'phase finished'}")
+    ph = g.phase
+    print(f"  steps: {g.metrics[ph.key].get('done_steps') if ph.kind == 'task' else 'phase finished'}")
 
 
 class Bot:
@@ -104,6 +117,7 @@ class Bot:
                                           "--operator", "bot", *extra_args])
         self.sim = TeleopSim(args)
         self.m, self.d, self.game = self.sim.m, self.sim.d, self.sim.task_game
+        self.side = SS.CFG.arm.side
         self.ctrl_dt = 1.0 / args.control_hz
         self.hand, self.yaw, self.rot = HAND0.copy(), 0.0, None
         self.grip, self.stick, self.epoch = 0.0, 0.0, 0
@@ -118,9 +132,9 @@ class Bot:
             q = list(q4)
         else:
             q = [np.cos(self.yaw / 2), 0, 0, np.sin(self.yaw / 2)]
-        self.sim.latest_input = {"type": "input", "head": None, "left": None,
-                                 "right": {"pose": list(self.hand) + q, "grip": self.grip,
-                                           "stick": [0.0, self.stick], "epoch": self.epoch}}
+        self.sim.latest_input = {"type": "input", "head": None, "left": None, "right": None,
+                                 self.side: {"pose": list(self.hand) + q, "grip": self.grip,
+                                             "stick": [0.0, self.stick], "epoch": self.epoch}}
         self.sim.latest_input_t = time.perf_counter()
 
     def advance(self, dur):
@@ -135,15 +149,20 @@ class Bot:
 
     def wait_phase(self, key, timeout=20.0):
         t_end = self.d.time + timeout
-        while self.game.phase["key"] != key and self.d.time < t_end:
+        while self.game.phase.key != key and self.d.time < t_end:
             self.advance(0.1)
         while self.game.intro_until is not None and self.d.time < t_end:
             self.advance(0.1)
-        assert self.game.phase["key"] == key, f"expected phase {key}, got {self.game.phase['key']}"
+        assert self.game.phase.key == key, f"expected phase {key}, got {self.game.phase.key}"
 
-    # hand motion with the clutch held: the gripper target moves by the same amount
+    # hand motion with the clutch held: the gripper target moves by the same amount x the
+    # motion scale (so the hand moves 1/scale as far)
     def ee_target(self):
-        return self.sim.arms.teleop[SIDE].target_pos.copy()
+        return self.sim.arms.teleop[self.side].target_pos.copy()
+
+    @property
+    def scale(self):
+        return self.sim.arms.teleop[self.side].pos_scale
 
     def move_to(self, goal, dur=1.0, yaw=None):
         """Move the gripper target to goal (world) and turn to yaw, clutch held."""
@@ -154,7 +173,7 @@ class Bot:
         n = max(1, int(dur / 0.02))
         for k in range(n):
             a = 0.5 - 0.5 * np.cos(np.pi * (k + 1) / n)
-            self.hand = hand0 + (np.asarray(goal) - start) * a
+            self.hand = hand0 + (np.asarray(goal) - start) / self.scale * a
             self.yaw = yaw0 + (yaw1 - yaw0) * a
             self.advance(0.02)
         self.advance(0.25)
@@ -179,7 +198,7 @@ class Bot:
             R = np.zeros(9)
             mujoco.mju_quat2Mat(R, q)
             self.rot = R.reshape(3, 3)
-            self.hand = hand0 + (np.asarray(goal) - start) * a
+            self.hand = hand0 + (np.asarray(goal) - start) / self.scale * a
             self.advance(0.02)
         self.advance(0.3)
 
@@ -192,14 +211,20 @@ class Bot:
         a = self.sim.info.obj_qpos_adr[n]
         return self.d.qpos[a:a + 3].copy(), self.d.qpos[a + 3:a + 7].copy()
 
-    def pick_place(self, n, dest_xy, dest_yaw=None, place_z=None, lift=0.12):
-        """Grab object n from above (gripper turned to its faces), put it down at dest_xy."""
+    def pick_place(self, n, dest_xy, dest_yaw=None, period=None, place_z=None, lift=0.12):
+        """Grab object n from above (fingers closing across its narrow side), put it down at
+        dest_xy, turned to dest_yaw (or the same turn modulo period: a square every 90 deg)."""
         p, q = self.obj(n)
+        o = SS.CFG.objects[n]
         oyaw = np.arctan2(2 * (q[0] * q[3] + q[1] * q[2]), 1 - 2 * (q[2] ** 2 + q[3] ** 2))
         # the fingers close along world y at home (hand yaw 0); turn them to close across the
-        # object: squares any 90 deg, the bar across its width (its local x)
-        if n == "bar":
-            g_yaw = ((oyaw - np.pi / 2 + np.pi / 2) % np.pi) - np.pi / 2
+        # object: across its local x if that's its narrow side, its local y if that is, either
+        # for squares and round things
+        hx, hy = (o.half[0], o.half[1]) if o.shape == "box" else (1, 1)
+        if hx < hy - 1e-6:
+            g_yaw = (oyaw % np.pi) - np.pi / 2
+        elif hy < hx - 1e-6:
+            g_yaw = ((oyaw + np.pi / 2) % np.pi) - np.pi / 2
         else:
             g_yaw = ((oyaw + np.pi / 4) % (np.pi / 2)) - np.pi / 4
         top = np.r_[p[:2], S.TABLE_Z + lift]
@@ -208,8 +233,7 @@ class Bot:
         self.gripper(True)
         self.move_to(np.r_[p[:2], S.TABLE_Z + lift], 0.8)
         turn = 0.0 if dest_yaw is None else dest_yaw - oyaw
-        if dest_yaw is not None:     # the shortest turn that matches (squares: 90 deg symmetric)
-            period = SS.SLOTS[n][2]
+        if dest_yaw is not None and period:     # the shortest turn that matches
             turn = ((turn + period / 2) % period) - period / 2
         z = place_z if place_z is not None else SS.rest_z(n) + 0.004
         self.move_to(np.r_[dest_xy, S.TABLE_Z + lift], 1.4, yaw=g_yaw + turn)
@@ -229,52 +253,60 @@ class Bot:
         Image.fromarray(self.renderer.render()).save(self.pics / f"{name}.png")
 
 
+def play_phase(bot, ph):
+    """Do every step of a task phase the way a person would."""
+    g, cfg = bot.game, SS.CFG
+    types = {st.type for st in ph.steps}
+    for st in ph.steps:
+        mk = cfg.markers.get(st.marker) if st.marker else None
+        if st.type == "reach":
+            bot.move_to(st.target, 1.5)
+        elif st.type == "place_in_zone":
+            bot.pick_place(st.object, mk.pos)
+            print(f"  {st.object}: in the zone {g._in_zone(st.object, st.marker)}")
+        elif st.type == "place_in_slot":
+            bot.pick_place(st.object, mk.pos, dest_yaw=mk.yaw, period=mk.p["symmetry"])
+            print(f"  {st.object}: placed {g._slot_ok(st.object, st.marker)}  ({g.metrics[ph.key]['steps_done']}/{len(ph.steps)})")
+        elif st.type == "place_in_bin":
+            bot.pick_place(st.object, mk.pos, place_z=S.TABLE_Z + mk.p["wall_height"] + 0.045, lift=0.14)
+            print(f"  {st.object}: in bin {g._bin_of(st.object)}")
+        elif st.type == "remove_from":
+            lay = next((s for s in ph.steps if s.type == "lay_flat" and s.object == st.object), None)
+            if lay is None:
+                raise SystemExit(f"the bot can only take '{st.object}' out of its holder to lay it flat")
+            do_book(bot, st.object, st.marker, lay.marker)
+        elif st.type == "pour_into":
+            cup = cfg.objects[st.objects[0]].start_in
+            if cup is None:
+                raise SystemExit(f"the bot can only pour '{st.objects[0]}' from a cup they start in")
+            do_pour(bot, cup, st.marker)
+        elif st.type in ("lay_flat", "set_upright") and ("remove_from" in types or "pour_into" in types):
+            pass                                   # (done with the step above)
+        else:
+            raise SystemExit(f"the bot doesn't know how to do a '{st.type}' step on its own")
+        if g.phase is not ph:
+            break                                  # (the phase ended: done or out of time)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--skip", nargs="*", default=[], help="phases to leave undone: reach pick shapes sort")
+    ap.add_argument("--skip", nargs="*", default=[], help="phases to leave undone (their keys, e.g. shapes sort)")
     ap.add_argument("--pics", default=None)
     a = ap.parse_args()
     bot = Bot(pics=a.pics)
     g = bot.game
     bot.advance(0.5)
-    bot.wait_phase("reach")
-    print("paired; practice 1 (reach)")
-    if "reach" not in a.skip:
-        for tgt in SS.REACH:
-            bot.move_to(tgt, 1.5)
-    bot.grip = 0.0
-    bot.wait_phase("pick", timeout=200)
-    bot.pic("pick_start")
-    print("practice 2 (pick)")
-    if "pick" not in a.skip:
-        bot.pick_place("tut_cube", SS.ZONE)
-    bot.grip = 0.0
-    bot.wait_phase("shapes", timeout=200)
-    bot.pic("shapes_start")
-    print("task 1 (shapes)")
-    if "shapes" not in a.skip:
-        for n, ((sx, sy), syaw, _) in SS.SLOTS.items():
-            bot.pick_place(n, (sx, sy), dest_yaw=syaw)
-            print(f"  {n}: placed {g._slot_ok(n)}  ({g.metrics['shapes']['steps_done']}/3)")
-    bot.pic("shapes_end")
-    bot.grip = 0.0
-    bot.wait_phase("sort", timeout=300)
-    bot.pic("sort_start")
-    print("task 2 (sort)")
-    if "sort" not in a.skip:
-        for n, (bx, by) in SS.BINS.items():
-            bot.pick_place(n, (bx, by), place_z=S.TABLE_Z + SS.BIN_WALL + 0.045, lift=0.14)
-            print(f"  {n}: in bin {g._bin_of(n)}")
-    bot.pic("sort_end")
-    bot.grip = 0.0
-    bot.wait_phase("tilt", timeout=300)
-    bot.pic("tilt_start")
-    print("task 3 (tilt and pour)")
-    if "tilt" not in a.skip:
-        do_tilt(bot)
-    bot.pic("tilt_end")
-    bot.grip, bot.rot = 0.0, None
-    bot.wait_phase("done", timeout=400)
+    for ph in g.phases:
+        if ph.kind != "task":
+            continue
+        bot.wait_phase(ph.key, timeout=ph.limit + 60)
+        bot.pic(f"{ph.key}_start")
+        print(f"{ph.title} ({ph.key})")
+        if ph.key not in a.skip:
+            play_phase(bot, ph)
+        bot.pic(f"{ph.key}_end")
+        bot.grip, bot.rot = 0.0, None
+    bot.wait_phase(g.phases[-1].key, timeout=max(p.limit or 0 for p in g.phases) + 60)
     print(f"\nresults ({g.results_path}):")
     res = json.loads(g.results_path.read_text())
     for k, mt in res["metrics"].items():
@@ -283,6 +315,7 @@ def main():
               f"clutches {mt['clutches']} wrong bin {mt['wrong_bin']} episode {mt['episode']}")
     print("  scores:", res["scores"])
     print(f"  wall time {time.perf_counter() - bot.wall0:.0f} s for {bot.d.time:.0f} s simulated")
+    return res
 
 
 if __name__ == "__main__":
