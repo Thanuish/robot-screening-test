@@ -97,6 +97,7 @@ class ScreenGame:
         # wrist doesn't whip the arm around)
         sim.arms.max_speed, sim.arms.max_turn = self.cfg.arm.max_speed, self.cfg.arm.max_turn
         sim.arms.teleop[self.side].pos_scale = self.cfg.motion_scale
+        sim.arms.smoothing = self.cfg.smoothing or None
         # Testing one part: SCREEN_ONLY=<phase key> (e.g. tilt) runs only pairing, that phase,
         # and the end; the lobby sets it for its "test only" codes
         only = os.environ.get("SCREEN_ONLY", "").strip()

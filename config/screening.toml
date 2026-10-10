@@ -29,12 +29,14 @@ base = [0.0, -0.36]            # where its base stands, on the back edge of the 
 # gripper pointing down, 20 cm above the table
 home_deg = [0.7448, -92.3608, 111.956, -109.5495, -90.0002, 0.7448]
 min_height = 0.02              # the gripper's pinch point never goes lower than this above the table
-max_speed = 1.0                # [m/s] top speed of the gripper (about a real UR5e's); quick flicks are capped
-max_turn_deg = 180             # [deg/s] its top turning speed
+max_speed = 0.4                # [m/s] top speed of the gripper (a real UR5e can do 1.0); faster hand motion is capped
+max_turn_deg = 90              # [deg/s] its top turning speed
 servo_stiffness = 1.0          # x the UR5e's own joint motor stiffness (higher = follows faster; 3 was shaky)
 
 [controls]
-motion_scale = 1.5             # the robot moves this many cm per cm the phone moves
+motion_scale = 1.0             # the robot moves this many cm per cm the phone moves
+smoothing_s = 0.12             # smooths the phone's motion (it sends ~30 positions a second); higher =
+                               # smoother but the arm follows a little later. 0 = off
 
 # ---------------------------------------------------------------------------- what the candidate sees
 [view]                         # the monitor's starting camera (the candidate can turn and zoom it)
@@ -58,16 +60,16 @@ countdown_s = 3.0              # countdown before each timed phase
 pair_hold_s = 1.0              # the phone must be connected this long before the test goes on
 
 [tolerances]
-reach = 0.03                   # gripper this close to a reach target = touched
-slot_distance = 0.016          # a shape this close to its outline's centre ...
-slot_angle_deg = 15            # ... and turned to within this angle = in its outline
+reach = 0.04                   # gripper this close to a reach target = touched
+slot_distance = 0.025          # a shape this close to its outline's centre ...
+slot_angle_deg = 20            # ... and turned to within this angle = in its outline
 rest_speed = 0.03              # [m/s] an object slower than this is at rest
 rest_height = 0.008            # ... and within this of its resting height = lying on the table
 held_lift = 0.02               # an object this far above its resting height ...
 held_distance = 0.08           # ... and this close to the gripper = held (a grasp)
 container_margin = 0.01        # an object lower than a bin's / bowl's wall + this = inside
-flat_within_deg = 25.842       # lay_flat: the object's thin side within this angle of vertical
-upright_within_deg = 19.948    # set_upright: the cup's axis within this angle of vertical
+flat_within_deg = 30           # lay_flat: the object's thin side within this angle of vertical
+upright_within_deg = 25        # set_upright: the cup's axis within this angle of vertical
 
 # ---------------------------------------------------------------------------- scoring
 # Score per scored task, 0 to 100:
@@ -341,7 +343,7 @@ text = "Scan the QR code with your Android phone, open the link in Chrome and ta
 key = "reach"
 title = "Practice 1: move"
 scored = false
-time_limit_s = 150
+time_limit_s = 180
 text = "Hold MOVE and move your phone: the gripper follows your hand. Touch the green ball with the gripper. Let go of MOVE to reposition your hand."
 steps = [
   { type = "reach", target = [0.46, 0.12, 0.11] },
@@ -353,7 +355,7 @@ steps = [
 key = "pick"
 title = "Practice 2: pick and place"
 scored = false
-time_limit_s = 150
+time_limit_s = 180
 text = "Bring the open gripper down around the yellow cube, tap GRAB, lift it, put it into the green square and tap RELEASE. Turn your phone to turn the gripper."
 objects = ["tut_cube"]
 markers = ["zone"]
@@ -365,7 +367,7 @@ steps = [
 key = "shapes"
 title = "Task 1: shapes"
 scored = true
-time_limit_s = 240
+time_limit_s = 300
 text = "Put each shape into its outline on the board. Turn the shapes to match."
 objects = ["big_square", "small_square", "bar"]
 markers = ["slot_big_square", "slot_small_square", "slot_bar"]
@@ -379,7 +381,7 @@ steps = [
 key = "sort"
 title = "Task 2: sort by colour"
 scored = true
-time_limit_s = 180
+time_limit_s = 240
 text = "Put each object into the bin of its colour."
 objects = ["red_ball", "blue_cube", "green_cylinder"]
 markers = ["bin_red", "bin_blue", "bin_green"]
@@ -393,7 +395,7 @@ steps = [
 key = "tilt"
 title = "Task 3: tilt and pour"
 scored = true
-time_limit_s = 300
+time_limit_s = 420
 rotation = "full"
 text = "Now the gripper also tilts and twists with your phone. Take the book out of its holder, turn it flat and lay it on the green mat. Then pour the balls from the cup into the bowl and set the cup down upright."
 objects = ["book", "cup", "ball"]

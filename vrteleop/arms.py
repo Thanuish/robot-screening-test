@@ -24,6 +24,11 @@ class DualArms:
         self.max_speed: float | None = None
         self.max_turn: float | None = None
         self._goal = {s: None for s in S.SIDES}      # the rate-limited target (pos, quat)
+        # Optional smoothing [s] (None = off): the target follows the hand through a low-pass
+        # filter with this time constant. A phone's AR tracking sends ~30 poses a second; without
+        # it the arm moves in small steps
+        self.smoothing: float | None = None
+        self._smooth = {s: None for s in S.SIDES}    # the smoothed target (pos, quat)
 
     def reset(self, d: mujoco.MjData):
         for s in S.SIDES:
@@ -31,6 +36,24 @@ class DualArms:
             pos, quat = self.ik[s].fk(self.q_cmd[s], d.qpos)
             self.teleop[s].reset(pos, quat)
             self._goal[s] = None
+            self._smooth[s] = None
+
+    def _smoothed(self, s: str, pos, quat, dt: float):
+        """Move toward (pos, quat) a fraction 1 - exp(-dt / smoothing) of the way per tick."""
+        if not self.smoothing:
+            return pos, quat
+        if self._smooth[s] is None:
+            self._smooth[s] = (np.array(pos, float), np.array(quat, float))
+            return self._smooth[s]
+        a = 1.0 - np.exp(-dt / self.smoothing)
+        sp, sq = self._smooth[s]
+        q1 = np.array(quat, float)
+        if np.dot(sq, q1) < 0:
+            q1 = -q1
+        sp = sp + (np.asarray(pos, float) - sp) * a
+        sq = sq * (1 - a) + q1 * a
+        self._smooth[s] = (sp, sq / np.linalg.norm(sq))
+        return self._smooth[s]
 
     def _limited(self, s: str, pos, quat, dt: float):
         """Move the IK goal toward (pos, quat) at most max_speed / max_turn per second."""
@@ -69,10 +92,12 @@ class DualArms:
             else:
                 tel.disengage()
             if tel.engaged:
-                pos, quat = self._limited(s, tel.target_pos, tel.target_quat, dt)
+                pos, quat = self._smoothed(s, tel.target_pos, tel.target_quat, dt)
+                pos, quat = self._limited(s, pos, quat, dt)
                 self.q_cmd[s] = self.ik[s].step(self.q_cmd[s], pos, quat, dt)
             else:
                 self._goal[s] = None              # (starts again from wherever the arm is)
+                self._smooth[s] = None
             d.ctrl[self.info.arm_act[s]] = self.q_cmd[s]
             d.ctrl[self.info.grip_act[s]] = 255.0 * tel.gripper
 
