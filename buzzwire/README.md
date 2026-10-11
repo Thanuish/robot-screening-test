@@ -5,8 +5,8 @@ a metal loop around a curved wire. Guide the loop from one end to the other with
 the wire, then hang the wand on the end hook. Played with an Android phone as a motion
 controller (like a VR controller), or the keyboard.
 
-**Status:** milestone 2 of 7 (physics, robot, keyboard and phone control, a first 3D view).
-Graphics, game menus, the level editor and hosting come next.
+**Status:** milestone 2 of 7 done (physics, robot, phone control), graphics (milestone 4) in a
+first realistic version. Game menus, the level editor and hosting come next.
 
 ## Try it
 
@@ -14,12 +14,19 @@ Graphics, game menus, the level editor and hosting come next.
 python -m buzzwire.server            # then open http://localhost:8000
 ```
 
-- **Phone:** scan the QR code on the page (needs the public tunnel:
-  `python -m TEST_TELEOP.lobby tunnel`). Hold **MOVE** and move the phone; **GRAB** / **RELEASE**
-  close and open the gripper; **RE-CENTER** makes "forward" the direction you point.
-- **Keyboard:** click the view, then **W A S D** move, **R / F** up / down, **Q / E** turn,
-  **I / K** tilt and **J / L** twist (level 3), **C** grab / release, **Shift** slow.
-- The green ghost shows where you point; the robot follows it at a real robot's speed.
+The screen shows a QR code: scan it with an **Android phone** (Chrome) and tap START CONTROLLER.
+The phone needs the public tunnel (`python -m TEST_TELEOP.lobby tunnel`). The phone is the only
+controller:
+
+- **Hold the blue pad** and move the phone: the robot follows (like a VR controller).
+- **GRAB / RELEASE** close and open the gripper. **RE-CENTER**: "forward" = where you point now.
+- The phone buzzes when the wand touches the wire, and on grab, release and level done.
+
+**Graphics:** physically based materials lit by an HDRI studio, a soft key light, ambient
+occlusion, bloom (the wire glows red when touched), anti-aliasing. Quality steps down by itself
+when the frame rate drops below 45 fps (high, medium, low); `?q=low` forces a preset. The frame
+rate of each screen is reported to the server's log. Assets: `buzzwire/web/assets/CREDITS.md`
+(CC0), three.js r170 in `buzzwire/web/vendor/` (MIT).
 
 ## How a level goes
 
@@ -51,5 +58,5 @@ buzzwire/
   game.py      one player's game: controller input, physics, touches, levels, scores, replay
   bot.py       plays through the controller messages (clean and clumsy)
   server.py    development server: the game in real time, the web pages
-  web/         the player's screen (three.js)
+  web/         index.html + app.js: the game screen (three.js); phone.html + phone.js: the controller
 ```

@@ -5,54 +5,94 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Robot Buzz Wire</title>
   <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1014; color: #e9ecf1;
+    :root { --panel: rgba(12, 15, 21, .62); --line: rgba(255,255,255,.09); --text: #eef1f6; --dim: #9aa3b2;
+      --accent: #36c2ff; --go: #2fdc7f; --bad: #ff3b4e; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #07080b; color: var(--text);
       font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
     canvas { display: block; }
-    .panel { position: fixed; background: rgba(14,16,20,.72); border: 1px solid rgba(255,255,255,.08);
-      border-radius: 12px; padding: 10px 14px; backdrop-filter: blur(6px); }
-    #level { top: 12px; left: 12px; max-width: min(460px, 60vw); }
-    #level h1 { font-size: 18px; margin: 0 0 4px; } #level p { margin: 0; color: #b8bec9; font-size: 14px; }
-    #stats { top: 12px; right: 12px; text-align: right; min-width: 150px; }
-    #timer { font: 700 30px/1 ui-monospace, Menlo, Consolas, monospace; }
-    #touches { font-size: 15px; margin-top: 4px; } #touches b { font-size: 20px; }
-    #progress { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(520px, 70vw);
-      height: 10px; border-radius: 6px; background: rgba(255,255,255,.12); overflow: hidden; }
-    #progress div { height: 100%; width: 0; background: linear-gradient(90deg, #3aa0ff, #4cd07d); transition: width .2s; }
-    #count { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-      font: 900 120px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 4px 30px rgba(0,0,0,.6); pointer-events: none; }
-    #flash { position: fixed; inset: 0; pointer-events: none; box-shadow: inset 0 0 120px 30px rgba(255,40,40,.85);
-      opacity: 0; transition: opacity .08s; }
-    #toast { position: fixed; top: 22%; left: 50%; transform: translateX(-50%); font: 800 34px/1.2 system-ui, sans-serif;
-      text-shadow: 0 3px 20px rgba(0,0,0,.7); opacity: 0; transition: opacity .3s; pointer-events: none; text-align: center; }
-    #side { bottom: 12px; right: 12px; width: 190px; font-size: 12px; color: #b8bec9; }
-    #side img { width: 100%; background: #fff; border-radius: 8px; }
-    #side a { color: #8bf; word-break: break-all; }
-    #keys { bottom: 12px; left: 12px; font-size: 12px; color: #b8bec9; }
-    #keys b { color: #e9ecf1; } #keys.on { border-color: #3aa0ff; }
-    #net { position: fixed; top: 2px; left: 50%; transform: translateX(-50%); font-size: 11px; color: #777; }
-    #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: #889; }
+    .glass { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px); box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+    /* top: level banner, timer, touches */
+    #top { position: fixed; top: 16px; left: 16px; right: 16px; display: grid; grid-template-columns: 1fr auto 1fr;
+      gap: 14px; align-items: start; pointer-events: none; }
+    #timerBox, #touchBox { padding: 10px 18px; min-width: 120px; }
+    #touchBox { justify-self: end; text-align: right; }
+    .lab { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); }
+    .val { font: 800 34px/1.05 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    #touches.hit { color: var(--bad); text-shadow: 0 0 18px rgba(255,59,78,.8); }
+    #timer.low { color: #ffb02e; }
+    #banner { text-align: center; padding: 10px 22px; max-width: min(560px, 46vw); }
+    #banner .lab { color: var(--accent); }
+    #title { font-size: 22px; font-weight: 900; letter-spacing: .02em; margin-top: 2px; }
+    #text { color: #c9d0db; font-size: 14px; margin-top: 4px; }
+    /* bottom: progress along the wire */
+    #progWrap { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); width: min(620px, 72vw); padding: 10px 16px; }
+    #progWrap .ends { display: flex; justify-content: space-between; font-size: 11px; letter-spacing: .16em; color: var(--dim); margin-bottom: 6px; }
+    #prog { height: 10px; border-radius: 6px; background: rgba(255,255,255,.1); overflow: hidden; }
+    #bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--go)); box-shadow: 0 0 14px rgba(54,194,255,.7); transition: width .25s; }
+    #phoneChip { position: fixed; left: 16px; bottom: 22px; padding: 8px 14px; font-size: 13px; color: var(--dim); }
+    #phoneChip .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); margin-right: 8px; }
+    #phoneChip.ok .dot { background: var(--go); box-shadow: 0 0 10px var(--go); } #phoneChip.ok { color: #d6ffe9; }
+    /* centre: countdown, messages, pairing */
+    #count { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none;
+      font: 900 160px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 8px 60px rgba(54,194,255,.8); }
+    #count.pop { animation: pop .9s ease-out; }
+    @keyframes pop { from { transform: scale(1.6); opacity: 0; } 30% { opacity: 1; } to { transform: scale(1); opacity: .9; } }
+    #toast { position: fixed; top: 30%; left: 50%; transform: translateX(-50%); font: 900 44px/1.15 system-ui, sans-serif;
+      text-shadow: 0 6px 30px rgba(0,0,0,.7); opacity: 0; transition: opacity .35s, transform .35s; pointer-events: none; text-align: center; }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(-8px); }
+    #pair { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(80% 70% at 50% 40%, rgba(10,14,22,.55), rgba(5,6,9,.85)); }
+    #pair .card { display: grid; grid-template-columns: 220px 1fr; gap: 26px; padding: 28px 30px; max-width: 720px; align-items: center; }
+    #pair img { width: 220px; height: 220px; background: #fff; border-radius: 14px; padding: 8px; box-sizing: border-box; }
+    #pair h2 { margin: 0 0 6px; font-size: 26px; font-weight: 900; }
+    #pair ol { margin: 10px 0 0; padding-left: 20px; color: #cfd6e1; } #pair li { margin: 6px 0; }
+    #pair .url { margin-top: 12px; font-size: 12px; color: var(--dim); word-break: break-all; }
+    #pair .url a { color: #8fd8ff; }
+    #flash { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .06s;
+      box-shadow: inset 0 0 160px 40px rgba(255, 30, 50, .85); }
+    #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #07080b; color: var(--dim);
+      font-size: 14px; letter-spacing: .2em; text-transform: uppercase; transition: opacity .6s; }
+    #corner { position: fixed; right: 16px; bottom: 22px; font-size: 11px; color: #6c7584; text-align: right; }
+    #corner button { background: none; border: 1px solid #2c3340; color: #8a93a2; border-radius: 8px; padding: 4px 9px; cursor: pointer; font-size: 11px; margin-left: 6px; }
+    #done { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(80% 70% at 50% 40%, rgba(16,40,30,.7), rgba(5,6,9,.92)); }
+    #done .card { padding: 34px 44px; text-align: center; max-width: 520px; }
+    #done h2 { font-size: 34px; margin: 10px 0 6px; }
+    .hidden { display: none !important; }
   </style>
   <script type="importmap">
   { "imports": { "three": "/vendor/three/build/three.module.js",
-                 "three/addons/": "/vendor/three/examples/jsm/" } }
+                 "three/addons/": "/vendor/three/addons/" } }
   </script>
 </head>
 <body>
-  <div id="loading">Loading…</div>
-  <div class="panel" id="level"><h1 id="title">Robot Buzz Wire</h1><p id="text"></p></div>
-  <div class="panel" id="stats"><div id="timer">0:00</div><div id="touches">touches <b id="nTouch">0</b></div>
-    <button id="restart" style="margin-top:8px;background:#2a2f39;color:#ddd;border:1px solid #444;border-radius:8px;padding:5px 10px;cursor:pointer">Restart</button></div>
-  <div id="progress"><div id="bar"></div></div>
-  <div id="count"></div>
-  <div id="flash"></div>
-  <div id="toast"></div>
-  <div class="panel" id="side"><div><b>Phone controller</b></div><img id="qr" alt=""><div id="phoneUrl"></div></div>
-  <div class="panel" id="keys">
-    <b>Keyboard</b> (click the view first): <b>W A S D</b> move, <b>R / F</b> up / down, <b>Q / E</b> turn,
-    <b>I / K</b> tilt, <b>J / L</b> twist, <b>C</b> grab / release, <b>Shift</b> slow.
-    Mouse: drag to look around, wheel to zoom.
+  <div id="top">
+    <div class="glass" id="timerBox"><div class="lab">Time left</div><div class="val" id="timer">0:00</div></div>
+    <div class="glass" id="banner"><div class="lab" id="lvlK">Level</div><div id="title">Robot Buzz Wire</div><div id="text"></div></div>
+    <div class="glass" id="touchBox"><div class="lab">Touches</div><div class="val" id="touches">0</div></div>
   </div>
-  <div id="net"></div>
+  <div class="glass" id="progWrap"><div class="ends"><span>START</span><span>FINISH</span></div><div id="prog"><div id="bar"></div></div></div>
+  <div class="glass" id="phoneChip"><span class="dot"></span><span id="phoneT">Phone not connected</span></div>
+  <div id="count"></div>
+  <div id="toast"></div>
+  <div id="flash"></div>
+  <div id="corner"><span id="fps"></span><button id="restart" title="Start again from level 1">Restart</button></div>
+  <div id="pair" class="hidden"><div class="glass card">
+    <img id="qr" alt="QR code for the phone controller">
+    <div>
+      <div class="lab" style="color:var(--accent)">Step 1</div>
+      <h2>Connect your phone</h2>
+      <ol>
+        <li>Scan this code with your <b>Android phone</b> and open it in <b>Chrome</b>.</li>
+        <li>Tap <b>START CONTROLLER</b> and allow the camera.</li>
+        <li>Hold the phone upright, pointed at this screen, then <b>hold the blue pad</b> to move the robot.</li>
+      </ol>
+      <div class="url" id="phoneUrl"></div>
+    </div>
+  </div></div>
+  <div id="done" class="hidden"><div class="glass card">
+    <svg viewBox="0 0 64 64" width="84" height="84" fill="none"><circle cx="32" cy="32" r="28" stroke="#2fdc7f" stroke-width="4"/><path d="M19 33l9 9 17-19" stroke="#2fdc7f" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <h2>All levels complete</h2><p style="color:#cfd6e1">Thank you for playing. Your attempt has been saved.</p></div></div>
+  <div id="loading">Loading the lab…</div>
   <script type="module" src="/static/app.js"></script>
 </body>
 </html>

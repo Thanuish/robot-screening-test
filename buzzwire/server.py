@@ -4,7 +4,7 @@ in real time; browsers only show it and send controller input.
     python -m buzzwire.server [--port 8000] [--levels straight curves]
 
     /            the game (3D view, HUD, keyboard control, the QR code for the phone)
-    /phone       the phone controller (the screening test's, unchanged)
+    /phone       the phone controller (the only controller: hold to move, grab / release)
     /scene.json  the current level's geometry (rebuilt per level)
     /ws          poses (binary, ~50 a second), status (JSON, 10 a second); input in
 
@@ -31,8 +31,7 @@ from .game import Game
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = Path(__file__).resolve().parent / "web"
-THREE = ROOT / "vrteleop" / "web" / "vendor"
-PHONE = ROOT / "TEST_TELEOP" / "web"
+THREE = WEB / "vendor"                 # three.js r170 and its addons (MIT, see vendor/three/LICENSE)
 DATA = ROOT / "data" / "buzzwire"
 TUNNEL = ROOT / "data" / "screening" / "tunnel.json"
 POSE_EVERY = 2                 # control ticks between pose packets (100 Hz / 2 = 50 a second)
@@ -44,6 +43,7 @@ class Server:
         self.args = args
         self.cfg = C.load()
         self.clients: set[web.WebSocketResponse] = set()
+        self.phone_seen = 0.0                 # when the phone last sent its pose
         self.new_game()
 
     def new_game(self):
@@ -97,10 +97,21 @@ class Server:
 
     def status(self) -> dict:
         st = self.game.status()
-        st.update(type="status", scene_id=self.scene_id, rtf=round(self.rtf, 2), scores=None)
-        # the phone page's fields (screening format): time left, countdown
-        st["task_game"].update(limit=st["limit"], time=st["time"], intro=st["countdown"])
+        st.update(type="status", scene_id=self.scene_id, rtf=round(self.rtf, 2), scores=None,
+                  phone=time.perf_counter() - self.phone_seen < 1.5)
         return st
+
+    def level_geometry(self) -> dict:
+        """The current level's shapes for the browser to draw finely (the physics uses capsules)."""
+        g, cfg = self.game, self.cfg
+        lv = g.level
+        board = cfg.board
+        return dict(scene_id=self.scene_id, level=lv.key, wire=lv.wire.pts[::2].round(5).tolist(),
+                    wire_length=lv.wire.length, wire_radius=cfg.wire["radius"],
+                    sleeve_length=cfg.wire["sleeve_length"], sleeve_radius=cfg.wire["sleeve_radius"],
+                    post_radius=cfg.wire["post_radius"], board_center=board["center"], board_size=board["size"],
+                    loop_radius=lv.loop_radius, loop_thickness=cfg.wand["loop_thickness"],
+                    handle_size=cfg.wand["handle_size"], table_z=C.TABLE_Z)
 
     async def broadcast(self, msg):
         dead = []
@@ -122,7 +133,7 @@ class Server:
         @web.middleware
         async def no_cache(request, handler):
             resp = await handler(request)
-            if "/vendor/" not in request.path:
+            if "/vendor/" not in request.path and "/assets/" not in request.path:
                 resp.headers["Cache-Control"] = "no-cache"
             return resp
         app.middlewares.append(no_cache)
@@ -131,10 +142,10 @@ class Server:
             return web.FileResponse(WEB / "index.html")
 
         async def phone(_):
-            text = (PHONE / "phone.html").read_text(encoding="utf-8")
-            text = text.replace("window.TELEOP_BASE = '/s/__CODE__';", "window.TELEOP_BASE = '';")
-            text = text.replace("/test-static/phone.js?v=__BOOT__", f"/phone-static/phone.js?v={int(time.time())}")
-            return web.Response(text=text, content_type="text/html")
+            return web.FileResponse(WEB / "phone.html")
+
+        async def level(_):
+            return web.json_response(self.level_geometry())
 
         async def scene(_):
             return web.Response(body=self.scene_gz, headers={"Content-Type": "application/json",
@@ -157,6 +168,7 @@ class Server:
             print(f"[ws] {who} connected ({len(self.clients)} open)", flush=True)
             await ws.send_str(json.dumps(self.status()))
             n_in = 0
+            fps_n = 0
             try:
                 async for msg in ws:
                     if msg.type != WSMsgType.TEXT:
@@ -168,6 +180,8 @@ class Server:
                     t = m.get("type")
                     if t == "input":
                         self.game.set_input(m)
+                        if (m.get("right") or {}).get("pose"):
+                            self.phone_seen = time.perf_counter()
                         n_in += 1
                         if n_in in (1, 100) or n_in % 1000 == 0:
                             c = m.get("right") or {}
@@ -175,6 +189,11 @@ class Server:
                                   f"state {self.game.state}", flush=True)
                     elif t == "view":
                         self.game.view_yaw = float(m.get("yaw", 0.0))
+                    elif t == "fps":                       # the game screen's frame rate, for the log
+                        fps_n += 1
+                        if fps_n % 6 == 1:
+                            print(f"[fps] {who}: {m.get('fps')} fps, quality {m.get('quality')}, "
+                                  f"{m.get('gpu', '')}", flush=True)
                     elif t == "ping":
                         await ws.send_str(json.dumps({"type": "pong", "t": m.get("t")}))
                     elif t == "restart":
@@ -188,11 +207,12 @@ class Server:
         app.router.add_get("/phone", phone)
         app.router.add_get("/scene.json", scene)
         app.router.add_get("/config.json", config)
+        app.router.add_get("/level.json", level)
         app.router.add_get("/qr.svg", qr)
         app.router.add_get("/ws", ws_handler)
         app.router.add_static("/static/", WEB)
         app.router.add_static("/vendor/", THREE)
-        app.router.add_static("/phone-static/", PHONE)
+        app.router.add_static("/assets/", WEB / "assets")
 
         async def start(_):
             app["loop"] = asyncio.create_task(self.run())
