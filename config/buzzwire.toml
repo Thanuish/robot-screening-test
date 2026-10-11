@@ -23,14 +23,15 @@ base = [0.0, 0.0]              # where its base stands on the table [x, y]
 # start pose (shoulder pan, shoulder lift, elbow, wrist 1, 2, 3): gripper pointing down,
 # about 30 cm in front of the base
 home_deg = [0.0, -100.0, 110.0, -100.0, -90.0, 0.0]
-max_speed = 0.3                # [m/s] top speed of the gripper (a real UR5e can do 1.0)
-max_turn_deg = 90              # [deg/s] top turning speed of the gripper
-joint_speed_deg = 120          # [deg/s] top speed of each joint
+max_speed = 0.6                # [m/s] top speed of the gripper (a real UR5e can do 1.0)
+max_turn_deg = 180             # [deg/s] top turning speed of the gripper
+joint_speed_deg = 180          # [deg/s] top speed of each joint (a UR5e's limit)
 table_clearance = 0.03         # the wrist and gripper keep at least this far above the table [m]
+servo_stiffness = 3.0          # x the UR5e's joint motor stiffness: higher = follows the hand quicker (1: ~130 ms behind, 3: ~90 ms)
 
 [controls]
 motion_scale = 1.0             # the robot moves this many cm per cm the phone moves
-smoothing_s = 0.1              # smooths the phone's motion (it sends ~30 positions a second); 0 = off
+smoothing_s = 0.03             # smooths the phone's motion (it sends ~30 positions a second); more = smoother but later; 0 = off
 
 # ---------------------------------------------------------------------------- physics
 [physics]

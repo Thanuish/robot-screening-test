@@ -3,9 +3,11 @@
 // controller (its page is /phone).
 //
 // Rendering: physically based materials lit by an HDRI studio (reflections on the chrome wire,
-// the brass ring and the robot), a key light with soft shadows, ambient occlusion (GTAO), bloom
-// (the wire glows red when touched), ACES tone mapping and SMAA anti-aliasing. Quality presets
-// (high / medium / low) step down automatically when the frame rate drops; ?q=low forces one.
+// the brass ring and the robot), a key light with soft shadows, ACES tone mapping, MSAA.
+// Presets: "standard" (the default: light enough for laptop graphics), "low" (chosen by itself
+// when the frame rate drops below 45), "high" (?q=high: adds ambient occlusion and bloom).
+// The robot's positions arrive ~50 times a second; the page glides between them (a 30 ms
+// buffer), so the motion is smooth at any frame rate.
 // The physics' simple shapes are replaced here by fine ones: the wire is one smooth tube along
 // the level's curve, the loop a real torus, the board a rounded wooden block.
 import * as THREE from 'three';
@@ -23,7 +25,7 @@ const $ = (id) => document.getElementById(id);
 const cfg = await (await fetch('/config.json')).json();
 
 // ------------------------------------------------------------ renderer, world frame, camera
-const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -257,11 +259,12 @@ const smaa = new SMAAPass(innerWidth, innerHeight);
 composer.addPass(smaa);
 const QUALITY = {
   high: { ratio: Math.min(devicePixelRatio, 2), shadow: 4096, ao: true, bloom: true },
-  medium: { ratio: 1, shadow: 2048, ao: true, bloom: true },
-  low: { ratio: Math.min(devicePixelRatio, 1) * 0.85, shadow: 1024, ao: false, bloom: false },
+  standard: { ratio: Math.min(devicePixelRatio, 1.25), shadow: 2048, ao: false, bloom: false },
+  low: { ratio: Math.min(devicePixelRatio, 1) * 0.8, shadow: 1024, ao: false, bloom: false },
 };
 const forced = new URLSearchParams(location.search).get('q');
-let quality = QUALITY[forced] ? forced : 'high';
+let quality = QUALITY[forced] ? forced : 'standard';
+let useComposer = false;                 // effects on: render through the composer, else directly
 function applyQuality() {
   const q = QUALITY[quality];
   renderer.setPixelRatio(q.ratio);
@@ -271,6 +274,8 @@ function applyQuality() {
     if (key.shadow.map) { key.shadow.map.dispose(); key.shadow.map = null; }
   }
   gtao.enabled = q.ao; bloom.enabled = q.bloom;
+  useComposer = q.ao || q.bloom;
+  key.shadow.radius = quality === 'low' ? 2 : 4;
   resize();
 }
 function resize() {
@@ -282,6 +287,38 @@ addEventListener('resize', resize);
 applyQuality();
 
 // ------------------------------------------------------------ network
+// ------------------------------------------------------------ smooth motion between packets
+// Each packet: the simulation time and every body's pose. Shown 30 ms late, interpolated between
+// the two packets around that moment (positions linearly, rotations by slerp).
+const DELAY = 0.03;
+let snaps = [], clockOff = null, lastSim = -1;
+function addSnap(f) {
+  const t = f[0], n = f[2];
+  if (t < lastSim - 0.001) { snaps = []; clockOff = null; }     // a new level: the clock restarts
+  lastSim = t;
+  const off = performance.now() / 1000 - t;                       // local clock - simulation clock
+  clockOff = clockOff === null ? off : Math.min(off, clockOff + 0.002);   // lower envelope: the least-delayed packet
+  snaps.push({ t, n, f });
+  if (snaps.length > 12) snaps.shift();
+}
+const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
+function applySnaps() {
+  if (!snaps.length || !bodies.length) return;
+  const rt = performance.now() / 1000 - clockOff - DELAY;       // the simulation moment to show
+  let a = snaps[0], b = snaps[snaps.length - 1];
+  for (let i = snaps.length - 1; i > 0; i--) {
+    if (snaps[i - 1].t <= rt) { a = snaps[i - 1]; b = snaps[i]; break; }
+  }
+  const u = b.t > a.t ? Math.min(1, Math.max(0, (rt - a.t) / (b.t - a.t))) : 1;
+  const n = Math.min(a.n, b.n, bodies.length);
+  for (let i = 0; i < n; i++) {
+    const o = 4 + 7 * i, A = a.f, B = b.f;
+    bodies[i].position.set(A[o] + (B[o] - A[o]) * u, A[o + 1] + (B[o + 1] - A[o + 1]) * u, A[o + 2] + (B[o + 2] - A[o + 2]) * u);
+    _qa.set(A[o + 4], A[o + 5], A[o + 6], A[o + 3]); _qb.set(B[o + 4], B[o + 5], B[o + 6], B[o + 3]);
+    bodies[i].quaternion.slerpQuaternions(_qa, _qb, u);
+  }
+}
+
 let ws, status = {};
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
@@ -292,11 +329,7 @@ function connect() {
     const f = new Float32Array(ev.data);
     const id = f[1], n = f[2];
     if (id !== sceneId) { if (id !== pendingScene) { pendingScene = id; loadScene(id); } return; }
-    for (let i = 0; i < n && i < bodies.length; i++) {
-      const o = 4 + 7 * i;
-      bodies[i].position.set(f[o], f[o + 1], f[o + 2]);
-      bodies[i].quaternion.set(f[o + 4], f[o + 5], f[o + 6], f[o + 3]);
-    }
+    addSnap(f);
     buzz(f[3] > 0.5);
   };
 }
@@ -397,7 +430,8 @@ renderer.setAnimationLoop((now) => {
   let sx = 0, sy = 0;
   if (shake > 0.01) { sx = (Math.random() - 0.5) * 0.004 * shake; sy = (Math.random() - 0.5) * 0.004 * shake; shake *= 0.85; }
   camera.position.x += sx; camera.position.y += sy;
-  composer.render();
+  applySnaps();
+  if (useComposer) composer.render(); else renderer.render(scene, camera);
   camera.position.x -= sx; camera.position.y -= sy;
   frames++;
   if (now - fpsT > 2000) {
@@ -406,7 +440,7 @@ renderer.setAnimationLoop((now) => {
     $('fps').textContent = `${Math.round(fps)} fps · ${quality}`;
     if (!forced && sceneId >= 0) {
       slow = fps < 45 ? slow + 1 : 0;
-      if (slow >= 2 && quality !== 'low') { quality = quality === 'high' ? 'medium' : 'low'; slow = 0; applyQuality(); }
+      if (slow >= 2 && quality !== 'low') { quality = quality === 'high' ? 'standard' : 'low'; slow = 0; applyQuality(); }
     }
     if (now - reportT > 10000) { send({ type: 'fps', fps: Math.round(fps), quality, gpu }); reportT = now; }
   }

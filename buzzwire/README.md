@@ -22,11 +22,16 @@ controller:
 - **GRAB / RELEASE** close and open the gripper. **RE-CENTER**: "forward" = where you point now.
 - The phone buzzes when the wand touches the wire, and on grab, release and level done.
 
-**Graphics:** physically based materials lit by an HDRI studio, a soft key light, ambient
-occlusion, bloom (the wire glows red when touched), anti-aliasing. Quality steps down by itself
-when the frame rate drops below 45 fps (high, medium, low); `?q=low` forces a preset. The frame
-rate of each screen is reported to the server's log. Assets: `buzzwire/web/assets/CREDITS.md`
-(CC0), three.js r170 in `buzzwire/web/vendor/` (MIT).
+**Graphics:** physically based materials lit by an HDRI studio (reflections), a soft key light,
+MSAA. Presets: **standard** (default, light enough for laptop graphics), **low** (chosen by
+itself below 45 fps), **high** (`?q=high`: adds ambient occlusion and bloom). The robot's
+positions (~50 a second) are interpolated, so motion is smooth at any frame rate. Each screen's
+frame rate goes to the server's log. Assets: `buzzwire/web/assets/CREDITS.md` (CC0), three.js r170
+in `buzzwire/web/vendor/` (MIT).
+
+**Responsiveness:** the robot follows the phone about 90 ms behind (simulation alone, plus the
+network): stiffer joint motors (`servo_stiffness = 3`), light smoothing (0.03 s), top speed
+0.6 m/s. All in `config/buzzwire.toml` `[robot]` and `[controls]`.
 
 ## How a level goes
 

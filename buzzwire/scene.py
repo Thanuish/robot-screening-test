@@ -152,11 +152,19 @@ def build(cfg: Config, level: Level) -> Scene:
     for b in spec.bodies:
         if b.name.startswith(ARM):
             b.gravcomp = 1.0                    # position servos track precisely
-    for a in spec.actuators:                    # Menagerie damping (kv = kp/5) halved: less lag
+    # joint motors: Menagerie damping (kv = kp/5) halved, then k x stiffer (sqrt(k) x the damping:
+    # still well damped) so the arm follows its target quicker ([robot] servo_stiffness)
+    k = cfg.robot["servo_stiffness"]
+    for a in spec.actuators:
         if any(a.name == ARM + n for n in ARM_ACTS):
-            bp = np.array(a.biasprm)
-            bp[2] *= 0.5
-            a.biasprm = bp
+            gp, bp = np.array(a.gainprm), np.array(a.biasprm)
+            gp[0] *= k
+            bp[1] *= k
+            bp[2] *= 0.5 * np.sqrt(k)
+            a.gainprm, a.biasprm = gp, bp
+            fr = np.array(a.forcerange)
+            if fr[1] > fr[0]:
+                a.forcerange = fr * k
 
     # board and posts
     bx, by = cfg.board["center"]
