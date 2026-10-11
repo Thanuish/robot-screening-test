@@ -30,7 +30,7 @@ function showNet() {
 
 // ------------------------------------------------------------ HUD + game feedback
 const fmt = (s) => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
-let lastTouches = 0, lastTouching = false, lastLevel = null, lastMsg = '', buzzT = 0, msgT = 0;
+let lastTouches = 0, lastTouching = false, lastLevel = null, lastRegrips = 0, lastMsg = '', buzzT = 0, msgT = 0;
 function showStatus() {
   const s = status;
   $('lvlK').textContent = s.count ? `Level ${s.index + 1} of ${s.count}` : 'Level';
@@ -51,7 +51,8 @@ function showStatus() {
   $('flash').style.opacity = s.touching ? 1 : 0;
   lastTouching = !!s.touching; lastTouches = s.touches || 0;
   if (lastLevel !== null && s.level !== lastLevel) vibrate([40, 60, 40, 60, 120]);   // level done
-  if (s.level !== lastLevel && s.start_held) setClosed(true);   // the wand starts in the hand: gripper closed
+  if ((s.level !== lastLevel || s.regrips !== lastRegrips) && s.start_held) setClosed(true);   // the wand is in the hand: gripper closed
+  lastRegrips = s.regrips;
   lastLevel = s.level;
   let msg = '';
   if (s.state === 'waiting') msg = 'Hold the pad and move to start';

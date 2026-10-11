@@ -33,6 +33,10 @@ ARM = "ur_"                     # name prefixes in the model
 GRIP = "ur_gripper_"
 CAPSULE_STEP = 0.01             # length of one wire capsule [m]
 RUBBER = [0.12, 0.12, 0.13, 1]
+# the wire and the ring are hard metal: stiff contacts (time constant 2 physics steps, almost no
+# give), so a strong pull can't press the wire through the ring
+HARD_SOLREF = (0.004, 1.0)
+HARD_SOLIMP = (0.99, 0.999, 0.0005, 0.5, 2)
 
 
 @dataclass
@@ -208,6 +212,7 @@ def build(cfg: Config, level: Level) -> Scene:
         g = _capsule(wb, f"{'sleeve' if sleeve else 'wire'}_{k}", a, b, cfg.wire["sleeve_radius"] if sleeve else r,
                      RUBBER if sleeve else [0, 0, 0, 1], None if sleeve else "metal")
         g.friction = [1.0, 0.01, 0.001] if sleeve else [0.3, 0.005, 0.0001]
+        g.solref, g.solimp = list(HARD_SOLREF), list(HARD_SOLIMP)
 
     # rest forks (start rest and end hook): a crossbar under the handle's back end, a prong each side
     hw, hh = cfg.wand["handle_size"][1] / 2, cfg.wand["handle_size"][2] / 2
@@ -248,6 +253,7 @@ def build(cfg: Config, level: Level) -> Scene:
         g = _capsule(wand, f"wand_loop_{k}", [R * np.cos(a0), 0, R * np.sin(a0)], [R * np.cos(a1), 0, R * np.sin(a1)],
                      t / 2, [0, 0, 0, 1], "brass")
         g.mass, g.condim = wd["loop_mass"] / N, 3
+        g.solref, g.solimp = list(HARD_SOLREF), list(HARD_SOLIMP)
 
     model = spec.compile()
     sc = Scene(model=model, cfg=cfg, level=level, rest=rest)

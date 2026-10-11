@@ -31,6 +31,7 @@ from .config import TABLE_Z, Config, Level
 from .ik import IK
 
 COUNTDOWN_S = 3.0
+RETURN_AFTER_S = 1.0           # start_held levels: the wand goes back into the hand after this long out of it
 HANG_HOLD_S = 0.5              # the wand must rest on the end hook, let go, this long
 HANG_DIST = 0.02               # ... its loop within this of the hook's rest position
 HELD_DIST = 0.03               # the handle's middle this close to the pinch point + gripper closed = held
@@ -148,6 +149,8 @@ class Game:
         self.input_log[lv.key] = []
         self._logged = None
         self.message = lv.title
+        self._unheld_since = None
+        self.regrips = 0
         # the gripper opens only on an explicit RELEASE: with the wand starting in the hand, a
         # controller that still says "open" (the phone's GRAB button before it's pressed) mustn't drop it
         self._release_armed = not lv.start_held
@@ -155,12 +158,13 @@ class Game:
             self._start_in_hand()
         self._quat0 = self.teleop.target_quat.copy()      # (rotation "none": the gripper keeps this)
 
-    def _start_in_hand(self):
-        """The wand in the gripper, its loop centred on the wire just past the start sleeve's middle:
-        the arm is placed there by IK, the fingers close on the handle while the wand is held still,
-        then it's let go of (only the fingers hold it)."""
+    def _start_in_hand(self, s0: float | None = None):
+        """The wand in the gripper, its loop centred on the wire at arc length s0 (default: the
+        start sleeve's middle): the arm is placed there by IK, the fingers close on the handle while
+        the wand is held still, then it's let go of (only the fingers hold it)."""
         cfg, lv, d, m = self.cfg, self.level, self.d, self.m
-        s0 = cfg.wire["sleeve_length"] * 0.5
+        if s0 is None:
+            s0 = cfg.wire["sleeve_length"] * 0.5
         centre, Rw = SC.wand_frame(lv, s0, lv.rotation == "full")
         wq = np.zeros(4)
         mujoco.mju_mat2Quat(wq, Rw.flatten())
@@ -168,6 +172,7 @@ class Game:
         gq = np.zeros(4)
         mujoco.mju_mat2Quat(gq, (Rw @ SC.GRIP_IN_WAND).flatten())
         q = np.array(cfg.robot["home"], float)
+        d.qvel[self.sc.arm_dof] = 0
         for _ in range(600):
             q = self.ik.step(q, pinch, gq, 0.01)
         err = float(np.linalg.norm(self.ik.fk(q)[0] - pinch))
@@ -185,8 +190,10 @@ class Game:
         self.q_cmd = q
         self.teleop.reset(*self.ik.fk(q))
         self.teleop.gripper = 1.0
+        self.follow.reset()
         self.metrics["picked_up"] = True
         self._prev_held = self.held()
+        self._unheld_since = None
 
     # ------------------------------------------------------------ input
     def set_input(self, msg: dict):
@@ -303,6 +310,22 @@ class Game:
         if self._prev_held and not held and tel.gripper > 0.5:
             mt["drops"] += 1
         self._prev_held = held
+        # a level that starts with the wand in hand puts it back there after a second out of it
+        # (pulled out against the wire, or let go): at the same place along the wire
+        if lv.start_held:
+            if held:
+                self._unheld_since = None
+            elif self._unheld_since is None:
+                self._unheld_since = t
+            elif t - self._unheld_since > RETURN_AFTER_S:
+                if not self._prev_held and tel.gripper < 0.5:
+                    mt["drops"] += 1                       # (let go on purpose: also a drop)
+                self._start_in_hand(min(max(s, self.cfg.wire["sleeve_length"] * 0.5),
+                                        lv.wire.length - self.cfg.wire["sleeve_length"]))
+                self._release_armed = False              # (the phone's button may still say "open")
+                self.regrips += 1
+                self.message = "The wand slipped: it's back in the robot's hand"
+                return
         # finish "reach_end": the loop (held) gets to the far sleeve
         if lv.finish == "reach_end" and held and s >= lv.wire.length - 0.8 * self.cfg.wire["sleeve_length"] \
                 and dist < lv.loop_radius:
@@ -361,7 +384,7 @@ class Game:
                   state=self.state, countdown=round(countdown, 1), time=mt["time_s"], limit=lv.limit,
                   touches=mt["touches"], touching=self.touching, progress=mt["progress"], held=self.held(),
                   rotation=lv.rotation, finished=self.finished, message=self.message,
-                  start_held=lv.start_held, finish=lv.finish,
+                  start_held=lv.start_held, finish=lv.finish, regrips=self.regrips,
                   engaged=self.teleop.engaged, gripper=round(self.teleop.gripper, 2))
         # what the phone controller page reads (the screening test's format)
         st["task_game"] = dict(rotation=lv.rotation, arm="right", finished=self.finished, title=lv.title,
