@@ -43,7 +43,7 @@ HARD_SOLIMP = (0.99, 0.999, 0.0005, 0.5, 2)
 class Scene:
     model: mujoco.MjModel
     cfg: Config
-    level: Level
+    level: object                        # the game's level (buzz wire: config.Level)
     arm_qpos: np.ndarray = None          # qpos addresses of the 6 arm joints
     arm_dof: np.ndarray = None
     arm_act: np.ndarray = None
@@ -132,9 +132,11 @@ def handle_centre_local(cfg: Config, level: Level):
     return np.array([-(level.loop_radius + L / 2), 0.0, 0.0])
 
 
-def build(cfg: Config, level: Level) -> Scene:
+def new_spec(cfg: Config, name: str) -> mujoco.MjSpec:
+    """A scene with what every game shares: the physics options, the room's floor and table, and
+    the robot (UR5e + 2F-85) on the table's back edge. A game adds its own things to it."""
     spec = mujoco.MjSpec()
-    spec.modelname = f"buzzwire_{level.key}"
+    spec.modelname = name
     spec.option.timestep = cfg.physics["timestep"]
     spec.option.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
     spec.option.cone = mujoco.mjtCone.mjCONE_ELLIPTIC
@@ -189,6 +191,28 @@ def build(cfg: Config, level: Level) -> Scene:
             fr = np.array(a.forcerange)
             if fr[1] > fr[0]:
                 a.forcerange = fr * k
+    return spec
+
+
+def bind_robot(sc: Scene):
+    """Fill in the robot's addresses in the compiled model (joints, motors, the pinch site, its geoms)."""
+    model = sc.model
+    jids = [model.joint(ARM + j).id for j in ARM_JOINTS]
+    sc.arm_qpos = np.array([model.jnt_qposadr[i] for i in jids])
+    sc.arm_dof = np.array([model.jnt_dofadr[i] for i in jids])
+    sc.arm_act = np.array([model.actuator(ARM + a).id for a in ARM_ACTS])
+    sc.grip_act = model.actuator(GRIP + "fingers_actuator").id
+    sc.ee_site = model.site(GRIP + "pinch").id
+    for g in range(model.ngeom):
+        if model.body(model.geom_bodyid[g]).name.startswith(ARM):
+            sc.robot_geoms.add(g)
+    return sc
+
+
+def build(cfg: Config, level: Level) -> Scene:
+    """The buzz-wire scene for one level."""
+    spec = new_spec(cfg, f"buzzwire_{level.key}")
+    wb = spec.worldbody
 
     # board and posts
     bx, by = cfg.board["center"]
@@ -273,20 +297,12 @@ def build(cfg: Config, level: Level) -> Scene:
     model = spec.compile()
     sc = Scene(model=model, cfg=cfg, level=level, rest=rest)
     sc.weld = model.equality("wand_in_hand").id
-    jids = [model.joint(ARM + j).id for j in ARM_JOINTS]
-    sc.arm_qpos = np.array([model.jnt_qposadr[i] for i in jids])
-    sc.arm_dof = np.array([model.jnt_dofadr[i] for i in jids])
-    sc.arm_act = np.array([model.actuator(ARM + a).id for a in ARM_ACTS])
-    sc.grip_act = model.actuator(GRIP + "fingers_actuator").id
-    sc.ee_site = model.site(GRIP + "pinch").id
+    bind_robot(sc)
     jw = model.joint("wand_joint").id
     sc.wand_qpos, sc.wand_dof, sc.wand_body = model.jnt_qposadr[jw], model.jnt_dofadr[jw], model.body("wand").id
     for g in range(model.ngeom):
-        name = model.geom(g).name
         if model.geom_bodyid[g] == sc.wand_body:
             sc.wand_geoms.add(g)
-        elif name.startswith("wire_"):
+        elif model.geom(g).name.startswith("wire_"):
             sc.wire_geoms.add(g)
-        elif model.body(model.geom_bodyid[g]).name.startswith(ARM):
-            sc.robot_geoms.add(g)
     return sc
