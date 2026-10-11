@@ -22,7 +22,7 @@ from . import config as C
 from . import scene as SC
 from .game import Game, replay
 
-F = np.diag([1.0, -1.0, -1.0])        # the gripper's orientation relative to the wand when holding it
+F = SC.GRIP_IN_WAND
 SEND_EVERY = 3                        # ticks between poses (~33 Hz, like a phone)
 
 
@@ -38,19 +38,7 @@ def _mat(q):
     return R.reshape(3, 3)
 
 
-def wand_frame(level, s, full: bool):
-    """The wand's ideal orientation at arc length s: its loop square to the wire, the handle
-    level (pointing back toward the robot)."""
-    p, t = level.wire.at(s)
-    th = np.array([t[0], t[1], 0.0])
-    th /= np.linalg.norm(th)
-    x = np.array([th[1], -th[0], 0.0])
-    if x[0] < 0:
-        x = -x
-    y = t if full else th
-    x = x - np.dot(x, y) * y
-    x /= np.linalg.norm(x)
-    return p, np.stack([x, y, np.cross(x, y)], axis=1)
+wand_frame = SC.wand_frame
 
 
 class Bot:
@@ -121,17 +109,21 @@ class Bot:
         self._send()                                     # (the first level waits for a controller)
         while g.state in ("waiting", "countdown") and not g.finished:
             self.run_ticks(1)
-        self.engage()
-        # the handle on the start rest: approach from above, close, lift until the loop is centred
-        c, q = g.sc.rest["start"]
-        Rw = _mat(q)
-        h = c + Rw @ SC.handle_centre_local(cfg, lv)
-        Rg = Rw @ F
-        self.move(h + [0, 0, 0.08], Rg, 2.0)
-        self.move(h, Rg, 1.2)
-        self.gripper(True)
-        lift = lv.loop_radius - cfg.wand["loop_thickness"] / 2 - cfg.wire["sleeve_radius"]
-        self.move(h + [0, 0, lift], Rg, 0.8)
+        if lv.start_held:                                # the wand starts in the hand
+            self.closed = True
+            self.engage()
+            lift = 0.0
+        else:                                            # pick it up from the start rest
+            self.engage()
+            c, q = g.sc.rest["start"]
+            Rw = _mat(q)
+            h = c + Rw @ SC.handle_centre_local(cfg, lv)
+            Rg = Rw @ F
+            self.move(h + [0, 0, 0.08], Rg, 2.0)
+            self.move(h, Rg, 1.2)
+            self.gripper(True)
+            lift = lv.loop_radius - cfg.wand["loop_thickness"] / 2 - cfg.wire["sleeve_radius"]
+            self.move(h + [0, 0, lift], Rg, 0.8)
         # the hold: the gripper target relative to the wand (as it is now held)
         wp, wq = g.wand_pose()
         tel = g.teleop
@@ -158,7 +150,13 @@ class Bot:
                     p = p + R[:, 2] * 1.4 * clear * np.sin(2 * np.pi * (s - s0) / 0.08)
                 self.command(*target_for(p, R))
             self.run_ticks(1)
+        if lv.finish == "reach_end":                     # done at the far sleeve (the level ends by itself)
+            while g.level.key == key and not g.finished:
+                self.run_ticks(1)
+            self.grip = 0.0
+            return
         # onto the end hook: above the rest, down, let go, away
+        lift = lv.loop_radius - cfg.wand["loop_thickness"] / 2 - cfg.wire["sleeve_radius"]
         c, q = g.sc.rest["end"]
         Rw = _mat(q)
         tp, tR = target_for(c, Rw)
@@ -188,7 +186,7 @@ def main():
         bot.play_level()
     wall = time.perf_counter() - t0
     for k, r in g.results.items():
-        print(f"  {k:9s} {'HUNG' if r['hung'] else 'not hung'}  time {r['time_s']:6.1f}s  touches {r['touches']:2d} "
+        print(f"  {k:9s} {'DONE' if r['completed'] else 'not done'}{' (hung)' if r['hung'] else ''}  time {r['time_s']:6.1f}s  touches {r['touches']:2d} "
               f"({r['touch_time_s']:.2f}s)  progress {r['progress']:.2f}  drops {r['drops']}  robot hits {r['robot_hits']}  "
               f"jerk {r['rms_jerk']}  score {r['score']}")
     print("  scores:", g.scores())

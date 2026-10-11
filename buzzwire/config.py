@@ -39,6 +39,8 @@ class Level:
     rotation: str
     points: np.ndarray           # control points in the world
     loop_radius: float
+    start_held: bool = True      # the wand starts in the gripper, its loop around the wire's start
+    finish: str = "reach_end"    # "reach_end": done at the far sleeve; "hang": set it on the end hook, let go
     wire: Wire = field(repr=False, default=None)
 
 
@@ -221,7 +223,8 @@ def parse(raw: dict, p="<config>") -> Config:
     bc = np.array([*board["center"], TABLE_Z + board["size"][2]])
     for i, lv in enumerate(raw_levels if isinstance(raw_levels, list) else []):
         wl = f"levels[{i + 1}]" + (f" ({lv.get('key')})" if isinstance(lv, dict) and lv.get("key") else "")
-        if not c.keys(lv, wl, ("key", "title", "text", "scored", "time_limit_s", "rotation", "points", "loop_radius"),
+        if not c.keys(lv, wl, ("key", "title", "text", "scored", "time_limit_s", "rotation", "points", "loop_radius",
+                               "start_held", "finish"),
                       required=("key", "title", "points")):
             continue
         pts = lv.get("points")
@@ -232,8 +235,10 @@ def parse(raw: dict, p="<config>") -> Config:
         P = np.array(pts, float) + bc
         L = Level(key=c.text(lv, "key", wl, f"level{i}"), title=c.text(lv, "title", wl, ""), text=c.text(lv, "text", wl, ""),
                   scored=c.flag(lv, "scored", wl, True), limit=float(c.num(lv, "time_limit_s", wl, 120, lo=10, hi=3600)),
-                  rotation=c.text(lv, "rotation", wl, "yaw", ("yaw", "full")), points=P,
-                  loop_radius=c.num(lv, "loop_radius", wl, wand["loop_radius"], lo=0.006, hi=0.08))
+                  rotation=c.text(lv, "rotation", wl, "yaw", ("none", "yaw", "full")), points=P,
+                  loop_radius=c.num(lv, "loop_radius", wl, wand["loop_radius"], lo=0.006, hi=0.08),
+                  start_held=c.flag(lv, "start_held", wl, True),
+                  finish=c.text(lv, "finish", wl, "reach_end", ("reach_end", "hang")))
         for k, q in enumerate(pts):
             x, y, z = P[k]
             if not (TABLE_X[0] <= x <= TABLE_X[1] and TABLE_Y[0] <= y <= TABLE_Y[1]):

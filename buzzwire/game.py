@@ -148,6 +148,45 @@ class Game:
         self.input_log[lv.key] = []
         self._logged = None
         self.message = lv.title
+        # the gripper opens only on an explicit RELEASE: with the wand starting in the hand, a
+        # controller that still says "open" (the phone's GRAB button before it's pressed) mustn't drop it
+        self._release_armed = not lv.start_held
+        if lv.start_held:
+            self._start_in_hand()
+        self._quat0 = self.teleop.target_quat.copy()      # (rotation "none": the gripper keeps this)
+
+    def _start_in_hand(self):
+        """The wand in the gripper, its loop centred on the wire just past the start sleeve's middle:
+        the arm is placed there by IK, the fingers close on the handle while the wand is held still,
+        then it's let go of (only the fingers hold it)."""
+        cfg, lv, d, m = self.cfg, self.level, self.d, self.m
+        s0 = cfg.wire["sleeve_length"] * 0.5
+        centre, Rw = SC.wand_frame(lv, s0, lv.rotation == "full")
+        wq = np.zeros(4)
+        mujoco.mju_mat2Quat(wq, Rw.flatten())
+        pinch = centre + Rw @ SC.handle_centre_local(cfg, lv)
+        gq = np.zeros(4)
+        mujoco.mju_mat2Quat(gq, (Rw @ SC.GRIP_IN_WAND).flatten())
+        q = np.array(cfg.robot["home"], float)
+        for _ in range(600):
+            q = self.ik.step(q, pinch, gq, 0.01)
+        err = float(np.linalg.norm(self.ik.fk(q)[0] - pinch))
+        if err > 0.003:
+            raise RuntimeError(f"level {lv.key}: the robot can't reach the wand's start ({err * 1000:.0f} mm off)")
+        sc, a, dof = self.sc, self.sc.wand_qpos, self.sc.wand_dof
+        d.qpos[sc.arm_qpos] = q
+        d.ctrl[sc.arm_act] = q
+        d.ctrl[sc.grip_act] = 255.0
+        mujoco.mj_forward(m, d)
+        for k in range(int(1.0 / m.opt.timestep)):     # 1 s: the fingers close, then the wand is let go
+            if k < int(0.7 / m.opt.timestep):
+                d.qpos[a:a + 3], d.qpos[a + 3:a + 7], d.qvel[dof:dof + 6] = centre, wq, 0
+            mujoco.mj_step(m, d)
+        self.q_cmd = q
+        self.teleop.reset(*self.ik.fk(q))
+        self.teleop.gripper = 1.0
+        self.metrics["picked_up"] = True
+        self._prev_held = self.held()
 
     # ------------------------------------------------------------ input
     def set_input(self, msg: dict):
@@ -180,10 +219,18 @@ class Game:
                 self.state, self.t_play = "play", d.time
         if ctrl is not None and self.level.rotation == "yaw" and ctrl.get("pose"):
             ctrl = dict(ctrl, pose=list(ctrl["pose"][:3]) + list(_yaw_only(ctrl["pose"][3:7])))
+        if ctrl is not None and not self._release_armed:
+            stick = ctrl.get("stick") or [0, 0]
+            if len(stick) > 1 and stick[1] > 0.5:
+                self._release_armed = True              # GRAB pressed: RELEASE works from now on
+            else:
+                ctrl = dict(ctrl, stick=[0.0, 0.0])      # (ignore "open" until then)
         tel = self.teleop
         if not tel.engaged:
             tel.target_pos, tel.target_quat = self.ik.fk(self.q_cmd)   # glued to the arm while idle
         tel.update(ctrl, self.dt)
+        if self.level.rotation == "none":
+            tel.target_quat = self._quat0.copy()         # the gripper keeps its angle
         if tel.engaged:
             gp, gq = self.follow(tel.target_pos, tel.target_quat, self.dt)
             self.q_cmd = self.ik.step(self.q_cmd, gp, gq, self.dt)
@@ -256,9 +303,17 @@ class Game:
         if self._prev_held and not held and tel.gripper > 0.5:
             mt["drops"] += 1
         self._prev_held = held
-        # hung: resting on the end hook, let go
+        # finish "reach_end": the loop (held) gets to the far sleeve
+        if lv.finish == "reach_end" and held and s >= lv.wire.length - 0.8 * self.cfg.wire["sleeve_length"] \
+                and dist < lv.loop_radius:
+            mt["completed"] = True
+            mt["progress"] = 1.0
+            self._end_level()
+            return
+        # finish "hang": resting on the end hook, let go
         v = float(np.linalg.norm(d.qvel[self.sc.wand_dof:self.sc.wand_dof + 3]))
-        on_hook = np.linalg.norm(p - end_c) < HANG_DIST and v < REST_SPEED and tel.gripper < 0.1
+        on_hook = (lv.finish == "hang" and np.linalg.norm(p - end_c) < HANG_DIST and v < REST_SPEED
+                   and tel.gripper < 0.1)
         if on_hook:
             self._hang_since = self._hang_since if self._hang_since is not None else t
             if t - self._hang_since >= HANG_HOLD_S:
@@ -306,6 +361,7 @@ class Game:
                   state=self.state, countdown=round(countdown, 1), time=mt["time_s"], limit=lv.limit,
                   touches=mt["touches"], touching=self.touching, progress=mt["progress"], held=self.held(),
                   rotation=lv.rotation, finished=self.finished, message=self.message,
+                  start_held=lv.start_held, finish=lv.finish,
                   engaged=self.teleop.engaged, gripper=round(self.teleop.gripper, 2))
         # what the phone controller page reads (the screening test's format)
         st["task_game"] = dict(rotation=lv.rotation, arm="right", finished=self.finished, title=lv.title,
@@ -328,7 +384,7 @@ def rms_jerk(P, dt) -> float | None:
 
 def score_level(mt: dict, lv: Level, w: dict) -> float:
     """0..100 for one level (see [scoring] in the configuration)."""
-    progress = 1.0 if mt["hung"] else 0.95 * mt["progress"]
+    progress = 1.0 if mt["completed"] else 0.95 * mt["progress"]
     no_touch = max(0.0, 1 - mt["touches"] / w["touches_to_zero"])
     touch_t = max(0.0, 1 - mt["touch_time_s"] / w["touch_seconds_to_zero"])
     time_part = max(0.0, 1 - mt["time_s"] / lv.limit) if mt["completed"] else 0.0

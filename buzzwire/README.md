@@ -35,12 +35,17 @@ network): stiffer joint motors (`servo_stiffness = 3`), light smoothing (0.03 s)
 
 ## How a level goes
 
-1. The wand rests on the start fork, its loop around the rubber sleeve at the start of the wire.
-2. Pick it up by the handle, lift until the loop is centred on the wire.
-3. Guide the loop along the wire. Touching the wire buzzes (red flash, sound) and is counted.
-4. Set the wand on the end fork (the hook) and let go: the level is done.
+1. The robot already holds the wand; its ring is around the wire at the start (the red sleeve).
+2. Hold the pad on the phone and move: slide the ring along the wire without touching it.
+   Touching buzzes (red flash, sound, the phone vibrates) and is counted.
+3. When the ring reaches the red sleeve at the far end, the level is done.
 
-**Score per level (0-100):** progress along the wire (40, full when hung), no touches (25),
+Level 1 is straight with a big ring that keeps its angle; level 2 bends left and right (turn the
+phone); level 3 also goes up and down (tilt the phone). Per level in `config/buzzwire.toml`: the
+ring's size (`loop_radius`), `rotation` (`none`, `yaw`, `full`), `start_held` (false: pick the
+wand up from its fork first) and `finish` (`hang`: set it on the end hook and let go).
+
+**Score per level (0-100):** progress along the wire (40, full when completed), no touches (25),
 little touch time (15), time left (10, if completed), smoothness (10, from the jerk of the
 motion). Weights and thresholds in `config/buzzwire.toml` `[scoring]`.
 

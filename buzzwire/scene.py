@@ -102,6 +102,25 @@ def wand_rest(cfg: Config, level: Level, end: str):
     return centre, _mat_quat(np.stack([x, y, z], axis=1))
 
 
+def wand_frame(level: Level, s: float, full: bool):
+    """(centre, rotation) of the wand ideally placed at arc length s: its loop centred on the wire
+    and square to it, the handle level, pointing back toward the robot. full = False: the loop
+    square to the wire's direction seen from above (the gripper only turns about the vertical)."""
+    p, t = level.wire.at(s)
+    th = np.array([t[0], t[1], 0.0])
+    th /= np.linalg.norm(th)
+    x = np.array([th[1], -th[0], 0.0])
+    if x[0] < 0:
+        x = -x
+    y = t if full else th
+    x = x - np.dot(x, y) * y
+    x /= np.linalg.norm(x)
+    return p, np.stack([x, y, np.cross(x, y)], axis=1)
+
+
+GRIP_IN_WAND = np.diag([1.0, -1.0, -1.0])   # the gripper's orientation relative to the wand when holding it
+
+
 def handle_centre_local(cfg: Config, level: Level):
     """The middle of the handle in the wand's frame (where the gripper should hold it)."""
     L = cfg.wand["handle_size"][0]

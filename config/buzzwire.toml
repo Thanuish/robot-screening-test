@@ -89,35 +89,43 @@ pass_mark = 50
 # In order. Each level:
 #   points         the wire's shape: [forward, left, up] from the board's centre, start to end
 #                  (a smooth curve is drawn through them). Start on the right (negative "left").
-#   rotation       "yaw": the gripper turns left/right only and keeps pointing down;
+#   rotation       "none": the ring keeps its angle (just slide it along);
+#                  "yaw": it turns left / right with the phone and stays upright;
 #                  "full": it also tilts and twists with the phone (six degrees of freedom)
-#   time_limit_s, scored (false = practice), loop_radius (optional: a smaller loop is harder)
+#   loop_radius    the ring's size [m] (from its centre to the middle of its metal): bigger = easier.
+#                  The wire must not bend tighter than 1.5 x this.
+#   start_held     true: the wand starts in the robot's hand, its loop around the wire;
+#                  false: it rests on the start fork and has to be picked up first
+#   finish         "reach_end": done when the ring gets to the red sleeve at the far end;
+#                  "hang": set the wand on the end hook (fork) and let go
+#   time_limit_s, scored (false = practice)
 
 [[levels]]
 key = "straight"
 title = "Level 1: straight"
-text = "Pick up the wand, guide the loop along the wire to the other end without touching it, and hang the wand on the end hook."
+text = "The robot holds the ring around the wire. Hold the pad and slide it to the red end without touching the wire."
 scored = false
-time_limit_s = 120
-rotation = "yaw"
-points = [[0.0, -0.20, 0.13], [0.0, 0.20, 0.13]]
+time_limit_s = 180
+rotation = "none"
+loop_radius = 0.035
+points = [[0.0, -0.18, 0.13], [0.0, 0.18, 0.13]]
 
 [[levels]]
 key = "curves"
-title = "Level 2: curves"
-text = "The wire bends left and right. Turn the wand with your hand to follow it."
+title = "Level 2: gentle curves"
+text = "The wire bends left and right. Turn your phone a little to keep the ring square to it."
 scored = true
-time_limit_s = 150
+time_limit_s = 240
 rotation = "yaw"
-points = [[0.0, -0.22, 0.13], [0.02, -0.13, 0.13], [-0.025, -0.03, 0.13], [0.025, 0.07, 0.13],
-          [-0.01, 0.16, 0.13], [0.0, 0.22, 0.13]]
+loop_radius = 0.03
+points = [[0.0, -0.21, 0.13], [0.012, -0.11, 0.13], [-0.012, 0.0, 0.13], [0.012, 0.11, 0.13], [0.0, 0.21, 0.13]]
 
 [[levels]]
 key = "space"
 title = "Level 3: up and down"
-text = "Now the wire also goes up and down. Tilt and twist your hand to keep the loop around it."
+text = "Now the wire also goes up and down. Tilt your phone to follow it."
 scored = true
-time_limit_s = 180
+time_limit_s = 300
 rotation = "full"
-points = [[0.0, -0.22, 0.13], [0.015, -0.13, 0.16], [-0.015, -0.04, 0.12], [0.015, 0.06, 0.17],
-          [-0.01, 0.15, 0.13], [0.0, 0.22, 0.14]]
+loop_radius = 0.026
+points = [[0.0, -0.21, 0.13], [0.01, -0.11, 0.155], [-0.01, 0.0, 0.125], [0.01, 0.11, 0.155], [0.0, 0.21, 0.135]]

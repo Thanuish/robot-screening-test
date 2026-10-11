@@ -51,10 +51,11 @@ function showStatus() {
   $('flash').style.opacity = s.touching ? 1 : 0;
   lastTouching = !!s.touching; lastTouches = s.touches || 0;
   if (lastLevel !== null && s.level !== lastLevel) vibrate([40, 60, 40, 60, 120]);   // level done
+  if (s.level !== lastLevel && s.start_held) setClosed(true);   // the wand starts in the hand: gripper closed
   lastLevel = s.level;
   let msg = '';
   if (s.state === 'waiting') msg = 'Hold the pad and move to start';
-  else if (s.state === 'play' && !s.held && s.progress === 0) msg = 'Pick up the wand by its handle';
+  else if (s.state === 'play' && !s.held) msg = s.start_held ? 'You let go of the wand: GRAB its handle again' : 'Pick up the wand by its handle';
   if (s.message && s.message !== lastMsg) { lastMsg = s.message; msgT = performance.now(); }
   if (performance.now() - msgT < 2500) msg = s.message;
   $('msg').textContent = msg;
@@ -94,12 +95,12 @@ document.addEventListener('contextmenu', (e) => e.preventDefault());
 for (const b of [grab, $('recenter')]) b.addEventListener('beforexrselect', (e) => e.preventDefault());
 $('overlay').addEventListener('mousedown', (e) => { if (!onButton(e.target)) setMove(true); });   // (testing on a computer)
 document.addEventListener('mouseup', () => setMove(false));
-grab.addEventListener('click', () => {
-  closed = !closed;
+function setClosed(c) {
+  closed = c;
   grab.classList.toggle('closed', closed);
   $('grabT').textContent = closed ? 'RELEASE' : 'GRAB';
-  vibrate(closed ? [30, 40, 30] : 20);
-});
+}
+grab.addEventListener('click', () => { setClosed(!closed); vibrate(closed ? [30, 40, 30] : 20); });
 $('recenter').addEventListener('click', () => { recenterReq = true; vibrate(15); });
 
 // ------------------------------------------------------------ pose math
