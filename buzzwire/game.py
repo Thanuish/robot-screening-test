@@ -207,7 +207,7 @@ class Game:
         R = np.zeros(9)
         mujoco.mju_quat2Mat(R, q)
         h = p + R.reshape(3, 3) @ SC.handle_centre_local(self.cfg, self.level)
-        return self.teleop.gripper > 0.5 and np.linalg.norm(h - self.d.site_xpos[self.sc.ee_site]) < HELD_DIST
+        return bool(self.teleop.gripper > 0.5 and np.linalg.norm(h - self.d.site_xpos[self.sc.ee_site]) < HELD_DIST)
 
     def _contacts(self):
         wand_wire = robot_wire = False

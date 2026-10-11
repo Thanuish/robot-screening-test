@@ -18,6 +18,7 @@ import asyncio
 import io
 import json
 import time
+import traceback
 from pathlib import Path
 
 import mujoco
@@ -35,6 +36,19 @@ THREE = WEB / "vendor"                 # three.js r170 and its addons (MIT, see 
 DATA = ROOT / "data" / "buzzwire"
 TUNNEL = ROOT / "data" / "screening" / "tunnel.json"
 POSE_EVERY = 2                 # control ticks between pose packets (100 Hz / 2 = 50 a second)
+
+
+def _plain(o):
+    """numpy numbers and booleans in a message -> plain Python (json can't encode numpy's)."""
+    if isinstance(o, np.generic):
+        return o.item()
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    raise TypeError(f"{type(o).__name__} is not JSON serializable")
+
+
+def dumps(obj) -> str:
+    return json.dumps(obj, default=_plain)
 STATUS_EVERY = 10
 
 
@@ -44,6 +58,7 @@ class Server:
         self.cfg = C.load()
         self.clients: set[web.WebSocketResponse] = set()
         self.phone_seen = 0.0                 # when the phone last sent its pose
+        self.rtf = 1.0                        # simulated seconds per real second (measured by run())
         self.new_game()
 
     def new_game(self):
@@ -60,6 +75,24 @@ class Server:
 
     # ---------------------------------------------------------------- the real-time loop
     async def run(self):
+        """The simulation in real time. An error in one tick is logged and the loop goes on (it
+        must never stop silently: the robot would freeze while the pages still load)."""
+        errors = 0
+        while True:
+            try:
+                await self._run()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                errors += 1
+                print(f"[error] the simulation loop failed ({errors}); restarting it:\n{traceback.format_exc()}", flush=True)
+                if errors >= 3:
+                    print("[error] three failures: starting a new game", flush=True)
+                    self.new_game()
+                    errors = 0
+                await asyncio.sleep(0.1)
+
+    async def _run(self):
         g = self.game
         dt = g.dt
         t0, tick0 = time.perf_counter(), 0
@@ -77,7 +110,7 @@ class Server:
                 if now - rtf_w > 1.0:
                     self.rtf = (tick0 - rtf_t) * dt / (now - rtf_w)
                     rtf_w, rtf_t = now, tick0
-                await self.broadcast(json.dumps(self.status()))
+                await self.broadcast(dumps(self.status()))
             # keep to real time (if behind, catch up without sleeping)
             wait = t0 + tick0 * dt - time.perf_counter()
             if wait > 0:
@@ -166,7 +199,7 @@ class Server:
             self.clients.add(ws)
             who = "phone" if "Android" in request.headers.get("User-Agent", "") else "browser"
             print(f"[ws] {who} connected ({len(self.clients)} open)", flush=True)
-            await ws.send_str(json.dumps(self.status()))
+            await ws.send_str(dumps(self.status()))
             n_in = 0
             fps_n = 0
             try:
