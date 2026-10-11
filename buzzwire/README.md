@@ -1,17 +1,23 @@
-# Robot Buzz Wire
+# Robot games: Buzz Wire, Cube Tasks, Tower
 
-A teleoperation screening game, like the classic buzz-wire game: a robot arm holds a wand with
-a metal loop around a curved wire. Guide the loop from one end to the other without touching
-the wire, then hang the wand on the end hook. Played with an Android phone as a motion
-controller (like a VR controller).
+Teleoperation games for screening robot operators, all with the same realistic 3D lab, the same
+robot (a UR5e with a Robotiq 2F-85 gripper, real physics) and the same controller: an Android
+phone held like a VR controller. A menu on the computer screen chooses the game:
 
-**Status:** milestone 2 of 7 done (physics, robot, phone control), graphics (milestone 4) in a
-first realistic version. Game menus, the level editor and hosting come next.
+| Game | What you do | Score per level |
+|---|---|---|
+| **Buzz Wire** | slide a ring along a curved wire without touching it (3 levels) | progress, touches, touch time, time, smoothness |
+| **Cube Tasks** | the screening test's tasks: a cube into a square, shapes into outlines, objects into bins | steps done, time left, grasps that worked (as in the screening test) |
+| **Tower** | blocks appear one at a time: stack them as high as you can (cubes; then bricks and planks) | best height, falls, grasps that worked |
+
+**Status:** milestones 2-4 done (physics, robot, phone, graphics); game menus in a first version.
+Level editor and hosting come next.
 
 ## Try it
 
 ```
-python -m buzzwire.server            # then open http://localhost:8000
+python -m buzzwire.server            # then open http://localhost:8000 and choose a game
+python -m buzzwire.server --game tower   # (start straight in one game)
 ```
 
 The screen shows a QR code: scan it with an **Android phone** (Chrome) and tap START CONTROLLER.
@@ -57,21 +63,27 @@ motion). Weights and thresholds in `config/buzzwire.toml` `[scoring]`.
 ## Checks
 
 ```
-python -m buzzwire.bot --replay          # clean run: every level, 0 touches; replay gives identical scores
-python -m buzzwire.bot --clumsy          # wobbles past the loop's clearance: touches are counted
+python -m buzzwire.bot --replay                 # Buzz Wire: every level, 0 touches; the replay scores the same
+python -m buzzwire.bot --clumsy                 # wobbles past the ring's clearance: touches are counted
+python -m buzzwire.bot --game cubes --replay    # Cube Tasks: every task done
+python -m buzzwire.bot --game tower --replay    # Tower: stacks every block
 ```
 
 ## Files
 
 ```
-config/buzzwire.toml   robot, controls, physics, view, board, wire, wand, scoring, levels
+config/buzzwire.toml   robot, controls, physics, view; Buzz Wire (board, wire, wand, scoring, levels);
+                       [cubes] (which tasks of config/screening.toml); [tower] (platform, blocks, levels)
 buzzwire/
   config.py    reads and checks the configuration
   spline.py    the wire's curve through the control points (arc length, closest point)
   scene.py     the MuJoCo model: robot, board, wire (capsule chain), forks, wand
   ik.py        inverse kinematics on Pinocchio (joint limits and speeds, table keep-out)
-  game.py      one player's game: controller input, physics, touches, levels, scores, replay
-  bot.py       plays through the controller messages (clean and clumsy)
+  base.py      what every game shares: controller input, teleop, IK, physics, clock, results, replay
+  game.py      Buzz Wire: touches, the guide at the wire, progress
+  cubes.py     Cube Tasks (the screening test's pick / shapes / sort tasks)
+  tower.py     Tower: blocks one at a time, height, falls
+  bot.py       plays every game through the controller messages (Buzz Wire: clean and clumsy)
   server.py    development server: the game in real time, the web pages
   web/         index.html + app.js: the game screen (three.js); phone.html + phone.js: the controller
 ```

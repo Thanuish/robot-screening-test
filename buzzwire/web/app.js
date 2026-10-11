@@ -140,6 +140,7 @@ let wireMats = [];
 async function buildLevel() {
   const L = await (await fetch('/level.json')).json();
   level.clear();
+  if (L.kind !== 'wire') return L;                 // (the other games' things come from the physics' shapes)
   const [bx, by] = L.board_center, [bw, bd, bh] = L.board_size, top = L.table_z + bh;
   // the board: a rounded wooden block
   const board = new THREE.Mesh(new RoundedBoxGeometry(bw, bd, bh, 4, 0.006), M.wood);
@@ -178,7 +179,7 @@ async function buildLevel() {
 // The server's geometry (scene.json) gives the robot, the forks and the wand's body. Shapes this
 // page draws better itself are left out (by name); the wand gets a torus loop and a rubber grip.
 let bodies = [], sceneId = -1, simRoot = null, pendingScene = -1;
-const SKIP = /^(floor|table_top|board_top|wire_|sleeve_|post_|wand_)/;
+const SKIP = /^(floor|table_top|board_top|wire_|sleeve_|post_|wand_|screen_goal)/;
 const b64 = (s, T) => { const b = Uint8Array.from(atob(s), c => c.charCodeAt(0)); return new T(b.buffer); };
 function geometry(g, meshes) {
   const s = g.size;
@@ -198,12 +199,24 @@ function geometry(g, meshes) {
   }
   return null;
 }
+const matCache = new Map();
 function materialFor(g, mats) {
   const name = g.mat >= 0 ? mats[g.mat].name : '';
   if (ROBOT[name]) return ROBOT[name];
   if (g.name.startsWith('fork_')) return M.rubberBlack;
+  if (name === 'wood' || name === 'screen_wood' || g.name === 'tower_platform') return M.wood;
   const rgba = g.mat >= 0 ? mats[g.mat].rgba : g.rgba;
-  return new THREE.MeshStandardMaterial({ color: new THREE.Color(rgba[0], rgba[1], rgba[2]), roughness: 0.6 });
+  // flat markings on the table (outlines, the supply spot): matte tape; things: glossy painted wood / plastic
+  const flat = g.type === 'box' && Math.min(...g.size) < 0.001;
+  const key = rgba.map(x => x.toFixed(3)).join(',') + (flat ? 'f' : '') + name;
+  if (!matCache.has(key)) {
+    const color = new THREE.Color(rgba[0], rgba[1], rgba[2]).convertSRGBToLinear();
+    matCache.set(key, flat ? new THREE.MeshStandardMaterial({ color, roughness: 0.85, emissive: color, emissiveIntensity: 0.08 })
+      : name.includes('ceramic') ? new THREE.MeshPhysicalMaterial({ color, roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.08 })
+      : new THREE.MeshPhysicalMaterial({ color, roughness: 0.38, clearcoat: 0.55, clearcoatRoughness: 0.25,
+                                         transparent: rgba[3] < 1, opacity: rgba[3] }));
+  }
+  return matCache.get(key);
 }
 function wand(L) {
   const R = L.loop_radius, t = L.loop_thickness, [len, w, h] = L.handle_size;
@@ -336,25 +349,59 @@ function connect() {
 connect();
 const send = (m) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
 $('restart').onclick = () => { send({ type: 'restart' }); $('restart').blur(); };
+$('toMenu').onclick = () => { send({ type: 'menu' }); $('toMenu').blur(); };
+$('doneMenu').onclick = () => send({ type: 'menu' });
 
 // ------------------------------------------------------------ HUD
 const fmt = (s) => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
-let lastMsg = '', toastT = 0, lastCount = '', lastTouches = 0;
+let lastMsg = '', toastT = 0, lastCount = '';
+const GAME_ICONS = {
+  wire: '<svg viewBox="0 0 64 64" fill="none"><path d="M4 40 C 16 16, 26 16, 34 34 S 52 52, 60 24" stroke="#36c2ff" stroke-width="4" stroke-linecap="round"/><ellipse cx="34" cy="34" rx="8" ry="11" stroke="#ffd27a" stroke-width="4"/><path d="M34 45v14" stroke="#e9ecf1" stroke-width="5" stroke-linecap="round"/></svg>',
+  cubes: '<svg viewBox="0 0 64 64" fill="none"><rect x="8" y="30" width="18" height="18" rx="3" fill="#f4a261"/><rect x="34" y="14" width="22" height="22" rx="3" stroke="#2fdc7f" stroke-width="3" stroke-dasharray="5 4"/><rect x="38" y="40" width="16" height="16" rx="3" fill="#457b9d"/><path d="M20 26 C 24 12, 34 10, 40 14" stroke="#e9ecf1" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 5"/></svg>',
+  tower: '<svg viewBox="0 0 64 64" fill="none"><rect x="14" y="52" width="36" height="6" rx="2" fill="#9c6b3d"/><rect x="22" y="40" width="20" height="12" rx="2" fill="#e63946"/><rect x="18" y="30" width="28" height="10" rx="2" fill="#e9c46a"/><rect x="24" y="18" width="16" height="12" rx="2" fill="#2a9d8f"/><rect x="26" y="6" width="12" height="12" rx="2" fill="#8e5bd8"/></svg>',
+};
+let menuBuilt = false, inMenu = null;
+function showMenu(s) {
+  if (!menuBuilt) {
+    $('cards').innerHTML = s.games.map(g => `<div class="glass gcard" data-k="${g.key}">${GAME_ICONS[g.key] || ''}
+      <h2>${g.title}</h2><p>${g.text}</p><div class="go">PLAY ▸</div></div>`).join('');
+    document.querySelectorAll('.gcard').forEach(c => c.onclick = () => { send({ type: 'select', game: c.dataset.k }); ensureAudio(); });
+    menuBuilt = true;
+  }
+  $('menuHint').textContent = s.phone ? 'Your phone is connected.' : 'Then scan the QR code with your Android phone to control the robot.';
+}
 function onStatus(s) {
   if (s.type !== 'status') return;
   status = s;
-  $('lvlK').textContent = `Level ${s.index + 1} of ${s.count}`;
+  const menu = s.state === 'menu';
+  if (menu !== inMenu) {
+    inMenu = menu;
+    for (const id of ['top', 'progWrap', 'steps']) $(id).classList.toggle('hidden', menu);
+    $('menu').classList.toggle('hidden', !menu);
+    $('toMenu').classList.toggle('hidden', menu); $('restart').classList.toggle('hidden', menu);
+    if (menu) { if (simRoot) { mj.remove(simRoot); simRoot = null; } level.clear(); bodies = []; sceneId = -1; pendingScene = -1;
+                $('loading').classList.add('hidden'); $('pair').classList.add('hidden'); $('done').classList.add('hidden'); }
+  }
+  $('phoneChip').classList.toggle('ok', s.phone);
+  $('phoneT').textContent = s.phone ? 'Phone connected' : 'Phone not connected';
+  if (menu) { showMenu(s); return; }
+  $('lvlK').textContent = `${s.game_title} · Level ${s.index + 1} of ${s.count}`;
   $('title').textContent = s.title.replace(/^Level \d+:\s*/, '');
   $('text').textContent = s.text;
   const left = s.state === 'play' ? s.limit - s.time : s.limit;
   $('timer').textContent = fmt(left);
   $('timer').classList.toggle('low', s.state === 'play' && left < 20);
-  $('touches').textContent = s.touches;
-  if (s.touches > lastTouches) { $('touches').classList.add('hit'); setTimeout(() => $('touches').classList.remove('hit'), 700); }
-  lastTouches = s.touches;
+  const main = (s.hud && s.hud[0]) || { label: '', value: '' };
+  $('mainLab').textContent = main.label;
+  if (String(main.value) !== $('touches').textContent && s.game === 'wire' && $('touches').textContent !== '') {
+    $('touches').classList.add('hit'); setTimeout(() => $('touches').classList.remove('hit'), 700);
+  }
+  $('touches').textContent = main.value;
+  $('more').innerHTML = (s.hud || []).slice(1).map(h => `<span class="chip ${h.alert ? 'alert' : ''}">${h.label} <b>${h.value}</b></span>`).join('');
   $('bar').style.width = `${Math.round(100 * s.progress)}%`;
-  $('phoneChip').classList.toggle('ok', s.phone);
-  $('phoneT').textContent = s.phone ? 'Phone connected' : 'Phone not connected';
+  $('steps').classList.toggle('hidden', !(s.steps && s.steps.length));
+  if (s.steps && s.steps.length) $('stepList').innerHTML = s.steps.map(st =>
+    `<div class="s ${st.done ? 'ok' : ''}"><i>${st.done ? '✓' : ''}</i>${st.label}</div>`).join('');
   $('pair').classList.toggle('hidden', s.phone || s.state !== 'waiting' || s.finished);
   $('done').classList.toggle('hidden', !s.finished);
   const c = s.state === 'countdown' && s.countdown > 0 ? String(Math.ceil(s.countdown)) : '';

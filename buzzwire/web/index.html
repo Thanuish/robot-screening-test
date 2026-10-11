@@ -58,6 +58,29 @@
     #done .card { padding: 34px 44px; text-align: center; max-width: 520px; }
     #done h2 { font-size: 34px; margin: 10px 0 6px; }
     .hidden { display: none !important; }
+    /* the menu */
+    #menu { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(90% 80% at 50% 35%, rgba(10,14,22,.35), rgba(5,6,9,.88)); }
+    #menu .wrap { width: min(1080px, 92vw); text-align: center; }
+    #menu h1 { font-size: 46px; font-weight: 900; letter-spacing: .08em; margin: 0; text-transform: uppercase;
+      background: linear-gradient(90deg, #fff, #9fdcff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    #menu .sub { color: var(--dim); letter-spacing: .25em; font-size: 12px; text-transform: uppercase; margin: 6px 0 30px; }
+    #cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
+    .gcard { text-align: left; padding: 22px; cursor: pointer; transition: transform .15s, border-color .15s, box-shadow .15s; border: 1px solid var(--line); }
+    .gcard:hover { transform: translateY(-4px); border-color: rgba(54,194,255,.55); box-shadow: 0 16px 50px rgba(54,150,255,.25); }
+    .gcard svg { width: 64px; height: 64px; margin-bottom: 10px; }
+    .gcard h2 { margin: 0 0 6px; font-size: 22px; } .gcard p { margin: 0; color: #c9d0db; font-size: 14px; }
+    .gcard .go { margin-top: 16px; display: inline-block; font-weight: 800; letter-spacing: .14em; font-size: 12px; color: var(--accent); }
+    #menu .hint { margin-top: 26px; color: var(--dim); font-size: 13px; }
+    /* secondary numbers and the checklist */
+    #more { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+    #more .chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,.07); color: #cfd6e1; }
+    #more .chip.alert { background: rgba(255,59,78,.25); color: #ffd0d5; }
+    #steps { position: fixed; left: 16px; top: 120px; padding: 12px 16px; min-width: 200px; }
+    #steps .lab { margin-bottom: 6px; }
+    #steps div.s { display: flex; gap: 10px; align-items: center; margin: 6px 0; color: #cfd6e1; font-size: 14px; }
+    #steps div.s i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #4a5263; flex: 0 0 18px; display: grid; place-items: center; font-style: normal; font-size: 11px; }
+    #steps div.s.ok { color: #d6ffe9; } #steps div.s.ok i { background: var(--go); border-color: var(--go); color: #062; }
+    #done .btn { margin-top: 18px; background: linear-gradient(135deg, #36c2ff, #7b5cff); color: #fff; border: 0; border-radius: 12px; padding: 12px 22px; font: 800 14px system-ui; letter-spacing: .12em; cursor: pointer; }
   </style>
   <script type="importmap">
   { "imports": { "three": "/vendor/three/build/three.module.js",
@@ -68,14 +91,20 @@
   <div id="top">
     <div class="glass" id="timerBox"><div class="lab">Time left</div><div class="val" id="timer">0:00</div></div>
     <div class="glass" id="banner"><div class="lab" id="lvlK">Level</div><div id="title">Robot Buzz Wire</div><div id="text"></div></div>
-    <div class="glass" id="touchBox"><div class="lab">Touches</div><div class="val" id="touches">0</div></div>
+    <div class="glass" id="touchBox"><div class="lab" id="mainLab">Touches</div><div class="val" id="touches">0</div><div id="more"></div></div>
   </div>
   <div class="glass" id="progWrap"><div class="ends"><span>START</span><span>FINISH</span></div><div id="prog"><div id="bar"></div></div></div>
   <div class="glass" id="phoneChip"><span class="dot"></span><span id="phoneT">Phone not connected</span></div>
   <div id="count"></div>
   <div id="toast"></div>
   <div id="flash"></div>
-  <div id="corner"><span id="fps"></span><button id="restart" title="Start again from level 1">Restart</button></div>
+  <div class="glass hidden" id="steps"><div class="lab">To do</div><div id="stepList"></div></div>
+  <div id="corner"><span id="fps"></span><button id="restart" title="Start this game again from level 1">Restart</button><button id="toMenu" title="Back to the game menu">Menu</button></div>
+  <div id="menu" class="hidden"><div class="wrap">
+    <h1>Robot Games</h1><div class="sub">Choose a game · play it with your phone</div>
+    <div id="cards"></div>
+    <div class="hint" id="menuHint"></div>
+  </div></div>
   <div id="pair" class="hidden"><div class="glass card">
     <img id="qr" alt="QR code for the phone controller">
     <div>
@@ -91,7 +120,8 @@
   </div></div>
   <div id="done" class="hidden"><div class="glass card">
     <svg viewBox="0 0 64 64" width="84" height="84" fill="none"><circle cx="32" cy="32" r="28" stroke="#2fdc7f" stroke-width="4"/><path d="M19 33l9 9 17-19" stroke="#2fdc7f" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <h2>All levels complete</h2><p style="color:#cfd6e1">Thank you for playing. Your attempt has been saved.</p></div></div>
+    <h2>All levels complete</h2><p style="color:#cfd6e1">Thank you for playing. Your attempt has been saved.</p>
+    <button class="btn" id="doneMenu">BACK TO THE MENU</button></div></div>
   <div id="loading">Loading the lab…</div>
   <script type="module" src="/static/app.js"></script>
 </body>

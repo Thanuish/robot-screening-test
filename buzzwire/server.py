@@ -3,7 +3,7 @@ in real time; browsers only show it and send controller input.
 
     python -m buzzwire.server [--port 8000] [--levels straight curves]
 
-    /            the game (3D view, HUD, keyboard control, the QR code for the phone)
+    /            the games: a menu (Buzz Wire, Cube Tasks, Tower), the 3D view, the HUD, the QR code
     /phone       the phone controller (the only controller: hold to move, grab / release)
     /scene.json  the current level's geometry (rebuilt per level)
     /ws          poses (binary, ~50 a second), status (JSON, 10 a second); input in
@@ -28,7 +28,15 @@ from aiohttp import WSMsgType, web
 from vrteleop.webscene import export_scene
 
 from . import config as C
-from .game import Game
+from .cubes import CubesGame
+from .game import BuzzWireGame
+from .tower import TowerGame
+
+GAMES = {   # key: (class, title, one line for the menu)
+    "wire": (BuzzWireGame, "Buzz Wire", "Slide the ring along the wire without touching it."),
+    "cubes": (CubesGame, "Cube Tasks", "Pick up cubes and shapes: into squares, outlines and bins."),
+    "tower": (TowerGame, "Tower", "Stack blocks as high as you can without the tower falling."),
+}
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = Path(__file__).resolve().parent / "web"
@@ -59,13 +67,26 @@ class Server:
         self.clients: set[web.WebSocketResponse] = set()
         self.phone_seen = 0.0                 # when the phone last sent its pose
         self.rtf = 1.0                        # simulated seconds per real second (measured by run())
-        self.new_game()
+        self.scene_id = -1                    # bumped with every new scene (browsers reload it)
+        self.game = None                      # None: the menu
+        self.kind = None
+        if args.game:
+            self.new_game(args.game)
 
-    def new_game(self):
-        out = DATA / time.strftime("%Y-%m-%d_%H-%M-%S")
-        self.game = Game(self.cfg, levels=self.args.levels, out_dir=out, player=self.args.player)
-        self.scene_id = -1
+    def new_game(self, kind: str | None = None):
+        """Start a game (kind: wire, cubes, tower; None: the current one again)."""
+        kind = kind or self.kind
+        if kind not in GAMES:
+            return
+        out = DATA / f"{time.strftime('%Y-%m-%d_%H-%M-%S')}_{kind}"
+        levels = self.args.levels if kind == (self.args.game or kind) else None
+        self.game = GAMES[kind][0](self.cfg, levels=levels, out_dir=out, player=self.args.player)
+        self.kind = kind
         self._export()
+        print(f"[game] {GAMES[kind][1]}", flush=True)
+
+    def to_menu(self):
+        self.game = None
 
     def _export(self):
         g = self.game
@@ -87,18 +108,22 @@ class Server:
                 errors += 1
                 print(f"[error] the simulation loop failed ({errors}); restarting it:\n{traceback.format_exc()}", flush=True)
                 if errors >= 3:
-                    print("[error] three failures: starting a new game", flush=True)
-                    self.new_game()
+                    print("[error] three failures: back to the menu", flush=True)
+                    self.to_menu()
                     errors = 0
                 await asyncio.sleep(0.1)
 
     async def _run(self):
-        g = self.game
-        dt = g.dt
+        dt = 1.0 / self.cfg.physics["control_hz"]
         t0, tick0 = time.perf_counter(), 0
         rtf_w, rtf_t, self.rtf = time.perf_counter(), 0, 1.0
         while True:
             g = self.game
+            if g is None:                             # the menu: only the status, 10 times a second
+                await self.broadcast(dumps(self.status()))
+                await asyncio.sleep(0.1)
+                t0, tick0, rtf_t, rtf_w = time.perf_counter(), 0, 0, time.perf_counter()
+                continue
             if (g.li, id(g.sc)) != self._level:
                 self._export()                        # a new level: new geometry for the browsers
             g.step()
@@ -129,22 +154,19 @@ class Server:
         return head.tobytes() + P.tobytes() + np.array(ghost, np.float32).tobytes()
 
     def status(self) -> dict:
+        phone = time.perf_counter() - self.phone_seen < 1.5
+        if self.game is None:
+            return dict(type="status", state="menu", phone=phone, scene_id=self.scene_id, rtf=1.0,
+                        games=[dict(key=k, title=v[1], text=v[2]) for k, v in GAMES.items()])
         st = self.game.status()
-        st.update(type="status", scene_id=self.scene_id, rtf=round(self.rtf, 2), scores=None,
-                  phone=time.perf_counter() - self.phone_seen < 1.5)
+        st.update(type="status", scene_id=self.scene_id, rtf=round(self.rtf, 2), scores=None, phone=phone)
         return st
 
     def level_geometry(self) -> dict:
-        """The current level's shapes for the browser to draw finely (the physics uses capsules)."""
-        g, cfg = self.game, self.cfg
-        lv = g.level
-        board = cfg.board
-        return dict(scene_id=self.scene_id, level=lv.key, wire=lv.wire.pts[::2].round(5).tolist(),
-                    wire_length=lv.wire.length, wire_radius=cfg.wire["radius"],
-                    sleeve_length=cfg.wire["sleeve_length"], sleeve_radius=cfg.wire["sleeve_radius"],
-                    post_radius=cfg.wire["post_radius"], board_center=board["center"], board_size=board["size"],
-                    loop_radius=lv.loop_radius, loop_thickness=cfg.wand["loop_thickness"],
-                    handle_size=cfg.wand["handle_size"], table_z=C.TABLE_Z)
+        """The current level's shapes for the browser to draw finely (the physics uses simple ones)."""
+        if self.game is None:
+            return dict(kind="menu", scene_id=self.scene_id, table_z=C.TABLE_Z)
+        return dict(self.game.level_geometry(), scene_id=self.scene_id, table_z=C.TABLE_Z)
 
     async def broadcast(self, msg):
         dead = []
@@ -231,6 +253,10 @@ class Server:
                         await ws.send_str(json.dumps({"type": "pong", "t": m.get("t")}))
                     elif t == "restart":
                         self.new_game()
+                    elif t == "select":
+                        self.new_game(str(m.get("game")))
+                    elif t == "menu":
+                        self.to_menu()
             finally:
                 self.clients.discard(ws)
                 print(f"[ws] {who} disconnected", flush=True)
@@ -267,6 +293,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--game", default=None, choices=list(GAMES), help="start this game (default: the menu)")
     ap.add_argument("--levels", nargs="*", default=None)
     ap.add_argument("--player", default="dev")
     a = ap.parse_args()

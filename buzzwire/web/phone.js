@@ -30,15 +30,26 @@ function showNet() {
 
 // ------------------------------------------------------------ HUD + game feedback
 const fmt = (s) => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
-let lastTouches = 0, lastTouching = false, lastLevel = null, lastMsg = '', buzzT = 0, msgT = 0;
+let lastTouching = false, lastLevel = null, lastMsg = '', buzzT = 0, msgT = 0;
 function showStatus() {
   const s = status;
-  $('lvlK').textContent = s.count ? `Level ${s.index + 1} of ${s.count}` : 'Level';
+  if (s.state === 'menu') {                          // the game menu is on the computer screen
+    $('lvlK').textContent = 'Robot games';
+    $('lvlT').textContent = 'Choose a game on the computer';
+    $('timer').textContent = '-'; $('touches').textContent = '-';
+    $('bar').style.width = '0%'; $('tilt').classList.add('hidden'); $('count').classList.add('hidden');
+    $('msg').textContent = ''; $('done').classList.add('hidden');
+    lastLevel = null;
+    return;
+  }
+  $('lvlK').textContent = s.count ? `${s.game_title || ''} · Level ${s.index + 1} of ${s.count}` : 'Level';
   $('lvlT').textContent = (s.title || '').replace(/^Level \d+:\s*/, '');
   const left = s.state === 'play' ? s.limit - s.time : s.limit;
   $('timer').textContent = fmt(left || 0);
   $('timer').classList.toggle('low', s.state === 'play' && left < 20);
-  $('touches').textContent = s.touches ?? 0;
+  const main = (s.hud && s.hud[0]) || { label: '', value: '' };
+  $('touches').textContent = main.value;
+  $('mainLab').textContent = main.label;
   $('bar').style.width = `${Math.round(100 * (s.progress || 0))}%`;
   $('tilt').classList.toggle('hidden', s.rotation !== 'full' || s.finished);
   const c = s.state === 'countdown' && s.countdown > 0 ? Math.ceil(s.countdown) : '';
@@ -47,9 +58,9 @@ function showStatus() {
   if (!c) $('count').textContent = '';
   // a touch: buzz in the hand, flash red
   if (s.touching && !lastTouching) { vibrate([70, 30, 70]); buzzT = performance.now(); }
-  if (s.touches > lastTouches) { $('touches').classList.add('hit'); setTimeout(() => $('touches').classList.remove('hit'), 600); }
+  if (main.alert) { $('touches').classList.add('hit'); setTimeout(() => $('touches').classList.remove('hit'), 600); }
   $('flash').style.opacity = s.touching ? 1 : 0;
-  lastTouching = !!s.touching; lastTouches = s.touches || 0;
+  lastTouching = !!s.touching;
   if (lastLevel !== null && s.level !== lastLevel) vibrate([40, 60, 40, 60, 120]);   // level done
   // levels with the wand fixed in the robot's hand: no GRAB / RELEASE
   if (s.start_held !== grab.disabled) {
@@ -64,7 +75,7 @@ function showStatus() {
   if (s.message && s.message !== lastMsg) { lastMsg = s.message; msgT = performance.now(); }
   if (performance.now() - msgT < 2500) msg = s.message;
   $('msg').textContent = msg;
-  if (s.finished) { $('done').classList.remove('hidden'); }
+  $('done').classList.toggle('hidden', !s.finished);
 }
 // keep buzzing while the wand stays on the wire
 setInterval(() => { if (lastTouching && performance.now() - buzzT > 250) { vibrate(60); buzzT = performance.now(); } }, 120);
