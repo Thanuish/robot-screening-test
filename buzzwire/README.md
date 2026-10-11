@@ -3,7 +3,7 @@
 A teleoperation screening game, like the classic buzz-wire game: a robot arm holds a wand with
 a metal loop around a curved wire. Guide the loop from one end to the other without touching
 the wire, then hang the wand on the end hook. Played with an Android phone as a motion
-controller (like a VR controller), or the keyboard.
+controller (like a VR controller).
 
 **Status:** milestone 2 of 7 done (physics, robot, phone control), graphics (milestone 4) in a
 first realistic version. Game menus, the level editor and hosting come next.
