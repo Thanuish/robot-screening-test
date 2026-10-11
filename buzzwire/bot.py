@@ -170,31 +170,131 @@ class Bot:
             self.run_ticks(1)
 
 
+def _rz(a):
+    c, s = np.cos(a), np.sin(a)
+    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+
+
+DOWN = np.diag([1.0, -1.0, -1.0])     # the gripper pointing down, fingers closing along world y (yaw 0)
+
+
+class PickBot(Bot):
+    """Pick-and-place games (cube tasks, tower): the gripper pointing down, turned about the vertical."""
+
+    def pick_place(self, n, pos_of, dest_xy, dest_yaw=None, period=None, place_z=None, lift=0.12, half=None, rest_z=None):
+        """Grab object n from above (fingers across its narrow side), carry it to dest_xy (turned to
+        dest_yaw modulo period), set it down at place_z (its centre), let go, lift."""
+        g = self.g
+        p, q = pos_of(n)
+        oyaw = np.arctan2(2 * (q[0] * q[3] + q[1] * q[2]), 1 - 2 * (q[2] ** 2 + q[3] ** 2))
+        hx, hy = (half[0], half[1]) if half is not None else (1, 1)
+        if hx < hy - 1e-6:
+            g_yaw = (oyaw % np.pi) - np.pi / 2
+        elif hy < hx - 1e-6:
+            g_yaw = ((oyaw + np.pi / 2) % np.pi) - np.pi / 2
+        else:
+            g_yaw = ((oyaw + np.pi / 4) % (np.pi / 2)) - np.pi / 4
+        Z = SC.TABLE_Z
+        self.move(np.r_[p[:2], Z + lift], _rz(g_yaw) @ DOWN, 1.4)
+        self.move(np.r_[p[:2], max(p[2], Z + 0.022)], _rz(g_yaw) @ DOWN, 1.0)
+        self.gripper(True)
+        self.move(np.r_[p[:2], Z + lift], _rz(g_yaw) @ DOWN, 0.9)
+        turn = 0.0 if dest_yaw is None else dest_yaw - oyaw
+        if dest_yaw is not None and period:
+            turn = ((turn + period / 2) % period) - period / 2
+        z = place_z if place_z is not None else rest_z + 0.004
+        self.move(np.r_[dest_xy, Z + lift], _rz(g_yaw + turn) @ DOWN, 1.5)
+        self.move(np.r_[dest_xy, z], _rz(g_yaw + turn) @ DOWN, 1.0)
+        self.gripper(False, 0.7)
+        self.move(np.r_[dest_xy, Z + lift], _rz(g_yaw + turn) @ DOWN, 0.8)
+
+    def start(self):
+        g = self.g
+        self.closed = False
+        self._send()
+        while g.state in ("waiting", "countdown") and not g.finished:
+            self.run_ticks(1)
+        self.engage()
+
+    def finish_level(self, key):
+        g = self.g
+        self.grip = 0.0
+        self._send()
+        while g.level.key == key and not g.finished:
+            self.run_ticks(1)
+
+
+def play_cubes(bot: PickBot):
+    """Every step of a cube-tasks level, the way a person would."""
+    from TEST_TELEOP import screen_scene as SS
+    g = bot.g
+    lv, key = g.level, g.level.key
+    bot.start()
+    for st in lv.phase.steps:
+        if g.level.key != key:
+            break
+        mk = g.tc.markers[st.marker]
+        o = g.tc.objects[st.object]
+        pos_of = lambda n: g._obj(n)[:2]
+        if st.type == "place_in_zone":
+            bot.pick_place(st.object, pos_of, mk.pos, half=o.half if o.shape == "box" else None, rest_z=SS.rest_z(st.object))
+        elif st.type == "place_in_slot":
+            bot.pick_place(st.object, pos_of, mk.pos, dest_yaw=mk.yaw, period=mk.p["symmetry"], half=o.half,
+                           rest_z=SS.rest_z(st.object))
+        elif st.type == "place_in_bin":
+            bot.pick_place(st.object, pos_of, mk.pos, place_z=SC.TABLE_Z + mk.p["wall_height"] + 0.045, lift=0.14,
+                           half=o.half if o.shape == "box" else None)
+        print(f"    {st.label}: {'done' if g.done.get(st.id) or g.level.key != key else 'NOT done'}")
+    bot.finish_level(key)
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--game", default="wire", choices=("wire", "cubes", "tower"))
     ap.add_argument("--clumsy", action="store_true")
     ap.add_argument("--levels", nargs="*", default=None)
     ap.add_argument("--replay", action="store_true", help="replay the input log and compare the scores")
     a = ap.parse_args()
     cfg = C.load()
     out = tempfile.mkdtemp(prefix="buzzwire-bot-")
-    g = Game(cfg, levels=a.levels, out_dir=out, player="bot")
-    bot = Bot(g, clumsy=a.clumsy)
+    if a.game == "wire":
+        cls = Game
+    elif a.game == "cubes":
+        from .cubes import CubesGame as cls
+    else:
+        from .tower import TowerGame as cls
+    g = cls(cfg, levels=a.levels, out_dir=out, player="bot")
     t0 = time.perf_counter()
-    sim0 = 0.0
-    while not g.finished:
-        bot.play_level()
+    if a.game == "wire":
+        bot = Bot(g, clumsy=a.clumsy)
+        while not g.finished:
+            bot.play_level()
+    else:
+        bot = PickBot(g)
+        while not g.finished:
+            print(f"  {g.level.title}")
+            if a.game == "cubes":
+                play_cubes(bot)
+            else:
+                from .tower import play_tower
+                play_tower(bot)
     wall = time.perf_counter() - t0
     for k, r in g.results.items():
-        print(f"  {k:9s} {'DONE' if r['completed'] else 'not done'}{' (hung)' if r['hung'] else ''}  time {r['time_s']:6.1f}s  touches {r['touches']:2d} "
-              f"({r['touch_time_s']:.2f}s)  progress {r['progress']:.2f}  drops {r['drops']}  robot hits {r['robot_hits']}  "
-              f"jerk {r['rms_jerk']}  score {r['score']}")
+        if a.game == "wire":
+            print(f"  {k:9s} {'DONE' if r['completed'] else 'not done'}{' (hung)' if r['hung'] else ''}  time {r['time_s']:6.1f}s  touches {r['touches']:2d} "
+                  f"({r['touch_time_s']:.2f}s)  progress {r['progress']:.2f}  drops {r['drops']}  robot hits {r['robot_hits']}  "
+                  f"jerk {r['rms_jerk']}  score {r['score']}")
+        else:
+            extra = {x: r[x] for x in ("steps_done", "steps_total", "height_cm", "best_height_cm", "placed", "falls") if x in r}
+            print(f"  {k:9s} {'DONE' if r['completed'] else 'not done'}  time {r['time_s']:6.1f}s  grasps {r['grasps']}/{r['grasp_attempts']} "
+                  f"drops {r['drops']} {extra}  score {r['score']}")
     print("  scores:", g.scores())
     sim = sum(r["time_s"] for r in g.results.values())
     print(f"  wall time {wall:.1f} s for about {sim + 3 * len(g.results):.0f} s of play")
     if a.replay:
         log = json.loads(open(f"{out}/inputs.json").read())
-        g2 = replay(cfg, log, levels=a.levels)
+        from .base import replay as base_replay
+        g2 = base_replay(cls, cfg, log, levels=a.levels)
         same = g2.scores() == g.scores() and all(g2.results[k] == g.results[k] for k in g.results)
         print(f"  replay: {g2.scores()}  -> {'IDENTICAL' if same else 'DIFFERENT'}")
     return g

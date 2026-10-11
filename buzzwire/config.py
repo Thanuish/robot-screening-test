@@ -56,6 +56,7 @@ class Config:
     wand: dict
     scoring: dict
     levels: list
+    games: dict = field(default_factory=dict)    # the other games' settings: "cubes", "tower"
 
     def level(self, key) -> Level:
         return next(lv for lv in self.levels if lv.key == key)
@@ -150,7 +151,7 @@ def load(p=None) -> Config:
 def parse(raw: dict, p="<config>") -> Config:
     c = _Checker()
     c.keys(raw, "file", ("version", "robot", "controls", "physics", "view", "board", "wire", "wand",
-                         "scoring", "levels"), required=("levels",))
+                         "scoring", "levels", "cubes", "tower"), required=("levels",))
     if raw.get("version", 1) != 1:
         c.err("version", f"this program reads version 1, the file says {raw.get('version')!r}")
 
@@ -262,7 +263,69 @@ def parse(raw: dict, p="<config>") -> Config:
         c.err("levels", "at least one [[levels]] entry is needed")
     elif not any(lv.scored for lv in levels):
         c.err("levels", "no level is scored = true")
+    games = dict(cubes=_cubes(c, raw.get("cubes", {})), tower=_tower(c, raw.get("tower", {}), robot))
     if c.problems:
         raise ConfigError(p, c.problems)
     return Config(path=Path(p), robot=robot, controls=controls, physics=physics, view=view, board=board,
-                  wire=wire, wand=wand, scoring=scoring, levels=levels)
+                  wire=wire, wand=wand, scoring=scoring, levels=levels, games=games)
+
+
+def _cubes(c: _Checker, raw: dict) -> dict:
+    """[cubes]: which tasks of config/screening.toml, and how low the gripper may go."""
+    c.keys(raw, "cubes", ("phases", "table_clearance"))
+    phases = raw.get("phases", ["pick", "shapes", "sort"])
+    if not (isinstance(phases, list) and phases and all(isinstance(x, str) for x in phases)):
+        c.err("cubes.phases", "should be a list of phase keys from config/screening.toml, e.g. [\"pick\", \"shapes\"]")
+        phases = ["pick", "shapes", "sort"]
+    return dict(phases=phases, table_clearance=c.num(raw, "table_clearance", "cubes", 0.015, lo=0.0, hi=0.2))
+
+
+def _color(c: _Checker, v, where):
+    if isinstance(v, str) and len(v) == 7 and v.startswith("#"):
+        try:
+            return [int(v[i:i + 2], 16) / 255 for i in (1, 3, 5)] + [1.0]
+        except ValueError:
+            pass
+    c.err(where, f"should be a colour \"#rrggbb\", got {v!r}")
+    return [0.7, 0.7, 0.7, 1.0]
+
+
+def _tower(c: _Checker, raw: dict, robot: dict) -> dict:
+    """[tower]: the stacking game: the platform, where blocks appear, the levels' blocks."""
+    c.keys(raw, "tower", ("table_clearance", "platform_center", "platform_size", "supply", "levels",
+                          "block_mass", "friction"))
+    out = dict(table_clearance=c.num(raw, "table_clearance", "tower", 0.015, lo=0.0, hi=0.2),
+               platform_center=c.vec(raw, "platform_center", "tower", 2, [0.52, 0.06]),
+               platform_size=c.vec(raw, "platform_size", "tower", 3, [0.14, 0.14, 0.02], lo=0.005),
+               supply=c.vec(raw, "supply", "tower", 2, [0.42, -0.18]),
+               block_mass=c.num(raw, "block_mass", "tower", 0.06, lo=0.005, hi=1.0),
+               friction=c.vec(raw, "friction", "tower", 3, [1.0, 0.01, 0.001], lo=0.0), levels=[])
+    for name, xy in (("platform_center", out["platform_center"]), ("supply", out["supply"])):
+        if math.hypot(xy[0] - robot["base"][0], xy[1] - robot["base"][1]) > ROBOTS[robot["model"]]["reach"] - 0.2:
+            c.err(f"tower.{name}", f"{xy} is too far from the robot")
+    for i, lv in enumerate(raw.get("levels", []) or []):
+        w = f"tower.levels[{i + 1}]"
+        if not c.keys(lv, w, ("key", "title", "text", "scored", "time_limit_s", "rotation", "target_height", "blocks"),
+                      required=("key", "title", "blocks")):
+            continue
+        blocks = []
+        for j, b in enumerate(lv.get("blocks", [])):
+            wb = f"{w}.blocks[{j + 1}]"
+            if not c.keys(b, wb, ("size", "color", "count"), required=("size",)):
+                continue
+            size = c.vec(b, "size", wb, 3, [0.05, 0.05, 0.05], lo=0.015)
+            if max(size[:2]) > 0.16 or min(size[:2]) > 0.075:
+                c.err(f"{wb}.size", "the gripper opens 8.5 cm: one side seen from above must be at most 7.5 cm")
+            col = _color(c, b.get("color", "#d9d9d9"), f"{wb}.color")
+            for _ in range(c.num(b, "count", wb, 1, lo=1, hi=30, integer=True)):
+                blocks.append(dict(size=size, rgba=col))
+        if not blocks:
+            c.err(w, "no blocks")
+        out["levels"].append(dict(key=c.text(lv, "key", w, f"tower{i}"), title=c.text(lv, "title", w, ""),
+                                  text=c.text(lv, "text", w, ""), scored=c.flag(lv, "scored", w, True),
+                                  limit=float(c.num(lv, "time_limit_s", w, 180, lo=10, hi=3600)),
+                                  rotation=c.text(lv, "rotation", w, "yaw", ("none", "yaw", "full")),
+                                  target=c.num(lv, "target_height", w, 0.2, lo=0.02, hi=1.0), blocks=blocks))
+    if not out["levels"]:
+        c.err("tower", "at least one [[tower.levels]] entry is needed")
+    return out

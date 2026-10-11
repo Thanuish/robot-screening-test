@@ -129,3 +129,56 @@ time_limit_s = 300
 rotation = "full"
 loop_radius = 0.026
 points = [[0.0, -0.21, 0.13], [0.01, -0.11, 0.155], [-0.01, 0.0, 0.125], [0.01, 0.11, 0.155], [0.0, 0.21, 0.135]]
+
+# =============================================================================================
+#  Cube tasks: the screening test's pick-and-place tasks with this game's robot and graphics.
+#  The tasks themselves (objects, outlines, bins, steps, time limits, scoring) are defined in
+#  config/screening.toml; here: which of its phases, in order.
+# =============================================================================================
+[cubes]
+phases = ["pick", "shapes", "sort"]    # practice: cube into the square; task 1: shapes; task 2: sorting
+table_clearance = 0.015                # the gripper may go this low above the table (cubes are 4-6 cm)
+
+# =============================================================================================
+#  Tower: stack blocks as high as you can. Blocks appear one at a time at the supply spot; take
+#  each to the platform and stack it. Score: height reached (60), no blocks fallen (20), grasps
+#  that worked (20). A block that was on the tower and ends up on the table has fallen.
+# =============================================================================================
+[tower]
+platform_center = [0.52, 0.06]         # the wooden platform the tower is built on [x, y]
+platform_size = [0.14, 0.14, 0.02]     # [x, y, height]
+supply = [0.42, -0.18]                 # where the next block appears
+block_mass = 0.06                      # [kg] each block
+friction = [1.0, 0.01, 0.001]          # sliding, twisting, rolling (wood on wood)
+table_clearance = 0.015
+
+[[tower.levels]]
+key = "cubes"
+title = "Tower 1: cubes"
+text = "Pick up each cube as it appears and stack them on the wooden platform. Build as high as you can!"
+scored = true
+time_limit_s = 180
+rotation = "yaw"
+target_height = 0.25                   # a tower this high scores full marks for height
+blocks = [{ size = [0.05, 0.05, 0.05], color = "#e63946", count = 1 },
+          { size = [0.05, 0.05, 0.05], color = "#f4a261", count = 1 },
+          { size = [0.05, 0.05, 0.05], color = "#e9c46a", count = 1 },
+          { size = [0.05, 0.05, 0.05], color = "#2a9d8f", count = 1 },
+          { size = [0.05, 0.05, 0.05], color = "#457b9d", count = 1 },
+          { size = [0.05, 0.05, 0.05], color = "#8e5bd8", count = 1 }]
+
+[[tower.levels]]
+key = "mixed"
+title = "Tower 2: mixed blocks"
+text = "Bricks and planks this time. Turn them to fit and keep the tower balanced."
+scored = true
+time_limit_s = 240
+rotation = "yaw"
+target_height = 0.22
+blocks = [{ size = [0.10, 0.05, 0.04], color = "#e63946" },
+          { size = [0.05, 0.05, 0.05], color = "#f4a261" },
+          { size = [0.12, 0.06, 0.025], color = "#e9c46a" },
+          { size = [0.05, 0.05, 0.05], color = "#2a9d8f" },
+          { size = [0.10, 0.05, 0.04], color = "#457b9d" },
+          { size = [0.06, 0.06, 0.03], color = "#8e5bd8" },
+          { size = [0.05, 0.05, 0.05], color = "#ef476f" }]
