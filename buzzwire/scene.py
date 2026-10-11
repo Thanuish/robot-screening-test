@@ -56,6 +56,7 @@ class Scene:
     wire_geoms: set = field(default_factory=set)
     robot_geoms: set = field(default_factory=set)
     rest: dict = field(default_factory=dict)   # "start" / "end" -> (pos, quat) of the wand at rest
+    weld: int = -1                       # the equality that fixes the wand in the hand
 
 
 def _box(body, name, pos, half, rgba=(0.5, 0.5, 0.5, 1), material=None, collide=True, quat=None):
@@ -255,8 +256,23 @@ def build(cfg: Config, level: Level) -> Scene:
         g.mass, g.condim = wd["loop_mass"] / N, 3
         g.solref, g.solimp = list(HARD_SOLREF), list(HARD_SOLIMP)
 
+    # the wand fixed in the hand (levels that start with it there): a weld, switched on by the game
+    eq = spec.add_equality()
+    eq.name, eq.type, eq.objtype = "wand_in_hand", mujoco.mjtEq.mjEQ_WELD, mujoco.mjtObj.mjOBJ_BODY
+    eq.name1, eq.name2 = "wand", GRIP + "base"
+    eq.active = False
+    eq.solref, eq.solimp = list(HARD_SOLREF), list(HARD_SOLIMP)
+    if level.start_held:
+        # the weld holds the wand: the fingers' contacts with the handle would fight it (the wand
+        # wobbled in the hand), so the wand and the gripper don't collide in these levels
+        for b in spec.bodies:
+            if b.name.startswith(GRIP):
+                ex = spec.add_exclude()
+                ex.bodyname1, ex.bodyname2 = "wand", b.name
+
     model = spec.compile()
     sc = Scene(model=model, cfg=cfg, level=level, rest=rest)
+    sc.weld = model.equality("wand_in_hand").id
     jids = [model.joint(ARM + j).id for j in ARM_JOINTS]
     sc.arm_qpos = np.array([model.jnt_qposadr[i] for i in jids])
     sc.arm_dof = np.array([model.jnt_dofadr[i] for i in jids])

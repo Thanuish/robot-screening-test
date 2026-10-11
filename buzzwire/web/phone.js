@@ -30,7 +30,7 @@ function showNet() {
 
 // ------------------------------------------------------------ HUD + game feedback
 const fmt = (s) => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
-let lastTouches = 0, lastTouching = false, lastLevel = null, lastRegrips = 0, lastMsg = '', buzzT = 0, msgT = 0;
+let lastTouches = 0, lastTouching = false, lastLevel = null, lastMsg = '', buzzT = 0, msgT = 0;
 function showStatus() {
   const s = status;
   $('lvlK').textContent = s.count ? `Level ${s.index + 1} of ${s.count}` : 'Level';
@@ -51,12 +51,16 @@ function showStatus() {
   $('flash').style.opacity = s.touching ? 1 : 0;
   lastTouching = !!s.touching; lastTouches = s.touches || 0;
   if (lastLevel !== null && s.level !== lastLevel) vibrate([40, 60, 40, 60, 120]);   // level done
-  if ((s.level !== lastLevel || s.regrips !== lastRegrips) && s.start_held) setClosed(true);   // the wand is in the hand: gripper closed
-  lastRegrips = s.regrips;
+  // levels with the wand fixed in the robot's hand: no GRAB / RELEASE
+  if (s.start_held !== grab.disabled) {
+    grab.disabled = !!s.start_held;
+    if (s.start_held) { closed = true; grab.classList.add('closed'); $('grabT').textContent = 'HOLDING'; }
+    else setClosed(false);
+  }
   lastLevel = s.level;
   let msg = '';
   if (s.state === 'waiting') msg = 'Hold the pad and move to start';
-  else if (s.state === 'play' && !s.held) msg = s.start_held ? 'You let go of the wand: GRAB its handle again' : 'Pick up the wand by its handle';
+  else if (s.state === 'play' && !s.held && !s.start_held) msg = 'Pick up the wand by its handle';
   if (s.message && s.message !== lastMsg) { lastMsg = s.message; msgT = performance.now(); }
   if (performance.now() - msgT < 2500) msg = s.message;
   $('msg').textContent = msg;

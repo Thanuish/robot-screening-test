@@ -46,15 +46,24 @@ class Wire:
         self.tangents = t / np.linalg.norm(t, axis=1, keepdims=True)
         self.control = P
 
-    def closest(self, p):
-        """(arc length, distance) of the point on the wire closest to p."""
-        a, b = self.pts[:-1], self.pts[1:]
+    def closest(self, p, near: float | None = None, window: float = 0.03):
+        """(arc length, distance) of the point on the wire closest to p; with near, only within
+        +/- window of that arc length (a continuous track: no jump to another part of a curve)."""
+        if near is not None:
+            i0 = max(0, int(np.searchsorted(self.s, near - window)) - 1)
+            i1 = min(len(self.s), int(np.searchsorted(self.s, near + window)) + 1)
+            if i1 - i0 >= 2:
+                return self._closest(p, i0, i1)
+        return self._closest(p, 0, len(self.s))
+
+    def _closest(self, p, i0, i1):
+        a, b = self.pts[i0:i1 - 1], self.pts[i0 + 1:i1]
         ab = b - a
         u = np.clip(np.einsum("ij,ij->i", np.asarray(p) - a, ab) / np.einsum("ij,ij->i", ab, ab), 0, 1)
         q = a + ab * u[:, None]
         d = np.linalg.norm(q - p, axis=1)
-        i = int(np.argmin(d))
-        return float(self.s[i] + u[i] * (self.s[i + 1] - self.s[i])), float(d[i])
+        i = int(np.argmin(d)) + i0
+        return float(self.s[i] + u[i - i0] * (self.s[i + 1] - self.s[i])), float(d[i - i0])
 
     def at(self, s: float):
         """(point, tangent) at arc length s."""

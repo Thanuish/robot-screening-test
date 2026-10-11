@@ -31,7 +31,8 @@ from .config import TABLE_Z, Config, Level
 from .ik import IK
 
 COUNTDOWN_S = 3.0
-RETURN_AFTER_S = 1.0           # start_held levels: the wand goes back into the hand after this long out of it
+GUIDE_DEPTH = 0.0015           # the guide lets the ring this far into the wire (so a touch registers), no further
+GUIDE_MAX_TILT = np.radians(30)   # ... and keeps the ring's axis within this of the wire's direction
 HANG_HOLD_S = 0.5              # the wand must rest on the end hook, let go, this long
 HANG_DIST = 0.02               # ... its loop within this of the hook's rest position
 HELD_DIST = 0.03               # the handle's middle this close to the pinch point + gripper closed = held
@@ -149,11 +150,7 @@ class Game:
         self.input_log[lv.key] = []
         self._logged = None
         self.message = lv.title
-        self._unheld_since = None
-        self.regrips = 0
-        # the gripper opens only on an explicit RELEASE: with the wand starting in the hand, a
-        # controller that still says "open" (the phone's GRAB button before it's pressed) mustn't drop it
-        self._release_armed = not lv.start_held
+        self.guide = None              # (start_held levels) the wand's pose in the gripper's frame
         if lv.start_held:
             self._start_in_hand()
         self._quat0 = self.teleop.target_quat.copy()      # (rotation "none": the gripper keeps this)
@@ -182,9 +179,21 @@ class Game:
         d.qpos[sc.arm_qpos] = q
         d.ctrl[sc.arm_act] = q
         d.ctrl[sc.grip_act] = 255.0
+        d.qpos[a:a + 3], d.qpos[a + 3:a + 7], d.qvel[dof:dof + 6] = centre, wq, 0     # the wand at its start
         mujoco.mj_forward(m, d)
-        for k in range(int(1.0 / m.opt.timestep)):     # 1 s: the fingers close, then the wand is let go
-            if k < int(0.7 / m.opt.timestep):
+        # fix the wand in the hand right where it is (a weld): it can't slip out or fall
+        wb, gb = self.sc.wand_body, self.m.body(SC.GRIP + "base").id
+        R1, R2 = d.xmat[wb].reshape(3, 3), d.xmat[gb].reshape(3, 3)
+        rel_q, q1i = np.zeros(4), np.zeros(4)
+        mujoco.mju_negQuat(q1i, d.xquat[wb])
+        mujoco.mju_mulQuat(rel_q, q1i, d.xquat[gb])
+        m.eq_data[self.sc.weld, :3] = 0
+        m.eq_data[self.sc.weld, 3:6] = R1.T @ (d.xpos[gb] - d.xpos[wb])
+        m.eq_data[self.sc.weld, 6:10] = rel_q
+        m.eq_data[self.sc.weld, 10] = 1.0
+        d.eq_active[self.sc.weld] = 1
+        for k in range(int(0.6 / m.opt.timestep)):     # the fingers close, the arm settles
+            if k < int(0.3 / m.opt.timestep):
                 d.qpos[a:a + 3], d.qpos[a + 3:a + 7], d.qvel[dof:dof + 6] = centre, wq, 0
             mujoco.mj_step(m, d)
         self.q_cmd = q
@@ -192,8 +201,14 @@ class Game:
         self.teleop.gripper = 1.0
         self.follow.reset()
         self.metrics["picked_up"] = True
+        # the guide: where the ring is relative to the gripper target (the commanded pinch pose)
+        Rt = np.zeros(9)
+        mujoco.mju_quat2Mat(Rt, self.teleop.target_quat)
+        Rt = Rt.reshape(3, 3)
+        Rwand = d.xmat[wb].reshape(3, 3)
+        self.guide = (Rt.T @ (d.xpos[wb] - self.teleop.target_pos), Rt.T @ Rwand[:, 1])
+        self._guide_s = s0
         self._prev_held = self.held()
-        self._unheld_since = None
 
     # ------------------------------------------------------------ input
     def set_input(self, msg: dict):
@@ -226,12 +241,8 @@ class Game:
                 self.state, self.t_play = "play", d.time
         if ctrl is not None and self.level.rotation == "yaw" and ctrl.get("pose"):
             ctrl = dict(ctrl, pose=list(ctrl["pose"][:3]) + list(_yaw_only(ctrl["pose"][3:7])))
-        if ctrl is not None and not self._release_armed:
-            stick = ctrl.get("stick") or [0, 0]
-            if len(stick) > 1 and stick[1] > 0.5:
-                self._release_armed = True              # GRAB pressed: RELEASE works from now on
-            else:
-                ctrl = dict(ctrl, stick=[0.0, 0.0])      # (ignore "open" until then)
+        if ctrl is not None and self.level.start_held:
+            ctrl = dict(ctrl, stick=[0.0, 0.0])          # the wand is fixed in the hand: the gripper stays closed
         tel = self.teleop
         if not tel.engaged:
             tel.target_pos, tel.target_quat = self.ik.fk(self.q_cmd)   # glued to the arm while idle
@@ -240,6 +251,8 @@ class Game:
             tel.target_quat = self._quat0.copy()         # the gripper keeps its angle
         if tel.engaged:
             gp, gq = self.follow(tel.target_pos, tel.target_quat, self.dt)
+            if self.guide is not None:
+                gp, gq = self._guided(gp, gq)
             self.q_cmd = self.ik.step(self.q_cmd, gp, gq, self.dt)
         else:
             self.follow.reset()
@@ -251,12 +264,56 @@ class Game:
         if self.state == "play":
             self._update_game(tel)
 
+    def _guided(self, gp, gq):
+        """The guide (a "virtual fixture"): the arm's target, limited so that the ring can touch
+        the wire (GUIDE_DEPTH into it, so the touch registers) but never press into it, and its
+        axis stays within GUIDE_MAX_TILT of the wire's direction. Pushing harder keeps the ring
+        touching; it can't tear the wand out or push the wire through it."""
+        lv, cfg = self.level, self.cfg
+        off, ax = self.guide
+        R = np.zeros(9)
+        mujoco.mju_quat2Mat(R, gq)
+        R = R.reshape(3, 3)
+        centre = gp + R @ off
+        s, _ = lv.wire.closest(centre, near=self._guide_s)
+        _, t = lv.wire.at(s)
+        a = R @ ax
+        # tilt: turn the target so the ring's axis is within the limit of the wire's direction
+        c = abs(float(np.dot(a, t)))
+        ang = np.arccos(min(1.0, c))
+        if ang > GUIDE_MAX_TILT:
+            n = np.cross(a, t * np.sign(np.dot(a, t) or 1.0))
+            nn = np.linalg.norm(n)
+            if nn > 1e-9:
+                dq = np.zeros(4)
+                mujoco.mju_axisAngle2Quat(dq, n / nn, ang - GUIDE_MAX_TILT)
+                q2 = np.zeros(4)
+                mujoco.mju_mulQuat(q2, dq, gq)
+                gq = q2
+                R9 = np.zeros(9)
+                mujoco.mju_quat2Mat(R9, gq)
+                R = R9.reshape(3, 3)
+                gp = centre - R @ off                    # (turned about the ring's centre)
+        # position: the ring's centre at most (clearance + GUIDE_DEPTH) from the wire
+        centre = gp + R @ off
+        s, _ = lv.wire.closest(centre, near=self._guide_s)
+        self._guide_s = s                                # (followed continuously along the wire)
+        p, _ = lv.wire.at(s)
+        v = centre - p
+        dist = float(np.linalg.norm(v))
+        allow = lv.loop_radius - cfg.wand["loop_thickness"] / 2 - cfg.wire["radius"] + GUIDE_DEPTH
+        if dist > allow:
+            gp = gp - v / dist * (dist - allow)
+        return gp, gq
+
     # ------------------------------------------------------------ the game
     def wand_pose(self):
         a = self.sc.wand_qpos
         return self.d.qpos[a:a + 3].copy(), self.d.qpos[a + 3:a + 7].copy()
 
     def held(self) -> bool:
+        if self.sc.weld >= 0 and self.d.eq_active[self.sc.weld]:
+            return True                                  # (fixed in the hand)
         p, q = self.wand_pose()
         R = np.zeros(9)
         mujoco.mju_quat2Mat(R, q)
@@ -310,22 +367,6 @@ class Game:
         if self._prev_held and not held and tel.gripper > 0.5:
             mt["drops"] += 1
         self._prev_held = held
-        # a level that starts with the wand in hand puts it back there after a second out of it
-        # (pulled out against the wire, or let go): at the same place along the wire
-        if lv.start_held:
-            if held:
-                self._unheld_since = None
-            elif self._unheld_since is None:
-                self._unheld_since = t
-            elif t - self._unheld_since > RETURN_AFTER_S:
-                if not self._prev_held and tel.gripper < 0.5:
-                    mt["drops"] += 1                       # (let go on purpose: also a drop)
-                self._start_in_hand(min(max(s, self.cfg.wire["sleeve_length"] * 0.5),
-                                        lv.wire.length - self.cfg.wire["sleeve_length"]))
-                self._release_armed = False              # (the phone's button may still say "open")
-                self.regrips += 1
-                self.message = "The wand slipped: it's back in the robot's hand"
-                return
         # finish "reach_end": the loop (held) gets to the far sleeve
         if lv.finish == "reach_end" and held and s >= lv.wire.length - 0.8 * self.cfg.wire["sleeve_length"] \
                 and dist < lv.loop_radius:
@@ -384,7 +425,7 @@ class Game:
                   state=self.state, countdown=round(countdown, 1), time=mt["time_s"], limit=lv.limit,
                   touches=mt["touches"], touching=self.touching, progress=mt["progress"], held=self.held(),
                   rotation=lv.rotation, finished=self.finished, message=self.message,
-                  start_held=lv.start_held, finish=lv.finish, regrips=self.regrips,
+                  start_held=lv.start_held, finish=lv.finish,
                   engaged=self.teleop.engaged, gripper=round(self.teleop.gripper, 2))
         # what the phone controller page reads (the screening test's format)
         st["task_game"] = dict(rotation=lv.rotation, arm="right", finished=self.finished, title=lv.title,

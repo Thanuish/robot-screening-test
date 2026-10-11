@@ -35,10 +35,15 @@ network): stiffer joint motors (`servo_stiffness = 3`), light smoothing (0.03 s)
 
 ## How a level goes
 
-1. The robot already holds the wand; its ring is around the wire at the start (the red sleeve).
+1. The robot already holds the wand (fixed in its hand: it can't slip out); its ring is around
+   the wire at the start (the red sleeve).
 2. Hold the pad on the phone and move: slide the ring along the wire without touching it.
    Touching buzzes (red flash, sound, the phone vibrates) and is counted.
 3. When the ring reaches the red sleeve at the far end, the level is done.
+
+**The guide** (a "virtual fixture", common in teleoperation): the arm's target is limited so the
+ring can touch the wire (the touch counts) but never press into it, and the ring stays within 30
+degrees of square to the wire. Pushing harder just keeps it touching; it can't be torn off.
 
 Level 1 is straight with a big ring that keeps its angle; level 2 bends left and right (turn the
 phone); level 3 also goes up and down (tilt the phone). Per level in `config/buzzwire.toml`: the
