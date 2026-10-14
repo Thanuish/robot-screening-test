@@ -37,6 +37,24 @@
       box-shadow: 0 10px 30px rgba(54,120,255,.45), inset 0 1px 0 rgba(255,255,255,.25); text-transform: uppercase; }
     #start:active { transform: scale(.98); }
     #start:disabled { background: #2a2f3a; box-shadow: none; color: #6c7380; }
+    #startTouch { margin-top: auto; width: 100%; padding: 20px; font-size: 19px; font-weight: 900; letter-spacing: .06em;
+      border-radius: 16px; background: linear-gradient(135deg, #2fdc7f, #19a35b); color: #fff; text-transform: uppercase;
+      box-shadow: 0 10px 30px rgba(47,220,127,.35), inset 0 1px 0 rgba(255,255,255,.25); }
+    #start.alt { margin-top: 14px; padding: 14px; font-size: 14px; background: #232835; box-shadow: none; border: 1px solid #39404f; }
+    /* touch controls: two joysticks */
+    #sticks { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stick { position: relative; border-radius: 26px; background: var(--panel); border: 1px solid rgba(54,194,255,.22);
+      display: grid; place-items: center; touch-action: none; overflow: hidden; }
+    .stick .ring2 { width: 78%; aspect-ratio: 1; max-width: 190px; border-radius: 50%; border: 2px dashed rgba(54,194,255,.35);
+      background: radial-gradient(circle, rgba(54,194,255,.08), transparent 70%); }
+    .stick .knob { position: absolute; left: 50%; top: 50%; width: 76px; height: 76px; margin: -38px 0 0 -38px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #4fd0ff, #2a6cff 70%); box-shadow: 0 0 30px rgba(54,150,255,.5);
+      pointer-events: none; transition: transform .06s; }
+    .stick.on { border-color: rgba(47,220,127,.6); }
+    .stick.on .knob { background: radial-gradient(circle at 35% 30%, #6dffb1, #18b56a 70%); box-shadow: 0 0 40px rgba(47,220,127,.6); }
+    .stick span { position: absolute; bottom: 10px; left: 0; right: 0; text-align: center; font-size: 11px; font-weight: 800;
+      letter-spacing: .12em; color: var(--dim); pointer-events: none; }
+    #recenter.tilt-on { background: rgba(255,190,60,.25); border-color: #ffb02e; color: #ffd27a; }
     .fine { color: var(--dim); font-size: 12px; text-align: center; margin-top: 12px; }
 
     /* ---------------------------------------------------------- the controller */
@@ -121,13 +139,15 @@
     </div>
     <ul class="steps">
       <li><span class="num">1</span><span>Keep the game open on your <b>computer screen</b>.</span></li>
-      <li><span class="num">2</span><span>Hold this phone <b>upright, screen facing you</b>, like a camera pointed at your screen.</span></li>
-      <li><span class="num">3</span><span>Tap <b>START</b> and allow the camera. It only measures how you move the phone; nothing is shown or sent.</span></li>
-      <li><span class="num">4</span><span><b>Hold the blue pad</b> and move the phone: the robot follows. <b>GRAB</b> closes the gripper.</span></li>
+      <li><span class="num">2</span><span>Tap <b>PLAY WITH TOUCH CONTROLS</b> below.</span></li>
+      <li><span class="num">3</span><span><b>Left stick</b>: move the gripper (forward = into the screen). <b>Right stick</b>: up / down and turn.</span></li>
+      <li><span class="num">4</span><span><b>GRAB</b> closes the gripper, <b>RELEASE</b> opens it. Push the sticks gently for fine moves.</span></li>
     </ul>
-    <p id="err"></p>
-    <button id="start">Start controller</button>
-    <div class="fine">Needs Chrome on an Android phone with Google Play Services for AR.</div>
+    <button id="startTouch">Play with touch controls</button>
+    <div class="fine">Two joysticks on the screen. Works on any phone.</div>
+    <button id="start" class="alt">Motion control (move the phone)</button>
+    <div class="fine">Advanced: the phone's camera tracks your hand. Android + Chrome with Google Play Services for AR.</div>
+    <p id="err" class="fine"></p>
   </div>
 
   <!-- in the game -->
@@ -150,6 +170,10 @@
       <div class="ring"></div><div class="pulse"></div>
       <div class="core" id="padT"><span>HOLD<small>TO MOVE</small></span></div>
       <div id="count" class="hidden"></div>
+    </div>
+    <div id="sticks" class="hidden">
+      <div class="stick" id="stL"><div class="ring2"></div><div class="knob"></div><span>MOVE</span></div>
+      <div class="stick" id="stR"><div class="ring2"></div><div class="knob"></div><span id="stRT">UP / DOWN · TURN</span></div>
     </div>
     <div class="row">
       <button id="grab"><svg viewBox="0 0 32 32" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><path d="M10 4v10l-4 6v8M22 4v10l4 6v8"/><path d="M10 14h12"/></svg><span id="grabT">GRAB</span></button>

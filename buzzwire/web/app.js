@@ -4,8 +4,8 @@
 //
 // Rendering: physically based materials lit by an HDRI studio (reflections on the chrome wire,
 // the brass ring and the robot), a key light with soft shadows, ACES tone mapping, MSAA.
-// Presets: "standard" (the default: light enough for laptop graphics), "low" (chosen by itself
-// when the frame rate drops below 45), "high" (?q=high: adds ambient occlusion and bloom).
+// Presets: "low" (the default: plain 1x resolution, small soft shadows), "standard" (?q=standard:
+// sharper on high-DPI screens, finer shadows), "high" (?q=high: adds ambient occlusion and bloom).
 // The robot's positions arrive ~50 times a second; the page glides between them (a 30 ms
 // buffer), so the motion is smooth at any frame rate.
 // The physics' simple shapes are replaced here by fine ones: the wire is one smooth tube along
@@ -273,10 +273,10 @@ composer.addPass(smaa);
 const QUALITY = {
   high: { ratio: Math.min(devicePixelRatio, 2), shadow: 4096, ao: true, bloom: true },
   standard: { ratio: Math.min(devicePixelRatio, 1.25), shadow: 2048, ao: false, bloom: false },
-  low: { ratio: Math.min(devicePixelRatio, 1) * 0.8, shadow: 1024, ao: false, bloom: false },
+  low: { ratio: 1, shadow: 1024, ao: false, bloom: false },
 };
 const forced = new URLSearchParams(location.search).get('q');
-let quality = QUALITY[forced] ? forced : 'standard';
+let quality = QUALITY[forced] ? forced : 'low';         // light by default (?q=standard / ?q=high for more)
 let useComposer = false;                 // effects on: render through the composer, else directly
 function applyQuality() {
   const q = QUALITY[quality];

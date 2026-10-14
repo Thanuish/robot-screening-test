@@ -70,8 +70,8 @@ function showStatus() {
   }
   lastLevel = s.level;
   let msg = '';
-  if (s.state === 'waiting') msg = 'Hold the pad and move to start';
-  else if (s.state === 'play' && !s.held && !s.start_held) msg = 'Pick up the wand by its handle';
+  if (s.state === 'waiting') msg = touchMode ? 'Push a stick to start' : 'Hold the pad and move to start';
+  else if (s.state === 'play' && !s.held && !s.start_held && s.game === 'wire') msg = 'Pick up the wand by its handle';
   if (s.message && s.message !== lastMsg) { lastMsg = s.message; msgT = performance.now(); }
   if (performance.now() - msgT < 2500) msg = s.message;
   $('msg').textContent = msg;
@@ -99,6 +99,7 @@ function refreshMove() {
 function setMove(on) { touchHold = on; refreshMove(); }
 const onButton = (el) => !!(el && el.closest && el.closest('#grab, #recenter'));
 $('overlay').addEventListener('touchstart', (e) => {
+  if (touchMode) return;                             // (joysticks: they handle their own touches)
   if (onButton(e.target)) return;
   e.preventDefault();
   setMove(true);
@@ -106,10 +107,11 @@ $('overlay').addEventListener('touchstart', (e) => {
 document.addEventListener('touchend', (e) => { if (e.touches.length === 0) setMove(false); }, { passive: true });
 document.addEventListener('touchcancel', (e) => { if (e.touches.length === 0) setMove(false); }, { passive: true });
 document.addEventListener('touchmove', (e) => { if (!$('intro').contains(e.target)) e.preventDefault(); }, { passive: false });
+document.addEventListener('touchstart', (e) => { if (touchMode && e.target.closest && e.target.closest('.stick')) e.preventDefault(); }, { passive: false });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 // taps on the two buttons must not also count as AR "select" (= MOVE)
 for (const b of [grab, $('recenter')]) b.addEventListener('beforexrselect', (e) => e.preventDefault());
-$('overlay').addEventListener('mousedown', (e) => { if (!onButton(e.target)) setMove(true); });   // (testing on a computer)
+$('overlay').addEventListener('mousedown', (e) => { if (!touchMode && !onButton(e.target)) setMove(true); });   // (testing on a computer)
 document.addEventListener('mouseup', () => setMove(false));
 function setClosed(c) {
   closed = c;
@@ -117,7 +119,7 @@ function setClosed(c) {
   $('grabT').textContent = closed ? 'RELEASE' : 'GRAB';
 }
 grab.addEventListener('click', () => { setClosed(!closed); vibrate(closed ? [30, 40, 30] : 20); });
-$('recenter').addEventListener('click', () => { recenterReq = true; vibrate(15); });
+$('recenter').addEventListener('click', () => { if (!touchMode) { recenterReq = true; vibrate(15); } });
 
 // ------------------------------------------------------------ pose math
 // WebXR: Y up, -Z = where the phone's back camera looked when tracking started.
@@ -203,7 +205,7 @@ async function supported() {
   } catch (e) { return 'Motion tracking is not available: ' + e.message; }
   return null;
 }
-supported().then(err => { if (err) { $('err').textContent = err; $('start').disabled = true; } });
+supported().then(err => { if (err) { $('err').textContent = 'Motion control is not available here: ' + err; $('start').disabled = true; } });
 
 $('start').addEventListener('click', async () => {
   const err = await supported();
@@ -257,5 +259,84 @@ $('start').addEventListener('click', async () => {
     $('start').textContent = 'Restart controller';
     xrHold = false;
     setMove(false);
+  });
+});
+
+// ------------------------------------------------------------ touch controls (no camera)
+// Two joysticks drive a virtual hand, sent exactly like the motion-tracked phone's pose:
+//   left stick   move forward / back / left / right ("forward" = into the game screen)
+//   right stick  up / down (y) and turn (x); with TILT on (levels with full rotation):
+//                tilt (y) and twist (x)
+// MOVE is held while a stick is pushed; letting go of both stops the robot where it is.
+const SPEED = 0.12, TURN = 70 * Math.PI / 180, DEAD = 0.12;    // [m/s], [rad/s] at full deflection
+let touchMode = false, tiltOn = false;
+const hand = [0, 0, 1], handQ = [1, 0, 0, 0];                   // w, x, y, z
+const sticks = { stL: { x: 0, y: 0, id: null }, stR: { x: 0, y: 0, id: null } };
+function qmul(a, b) {
+  return [a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3], a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+          a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1], a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]];
+}
+function turnAbout(axis, ang) {                                   // world-frame rotation of the hand
+  if (!ang) return;
+  const s = Math.sin(ang / 2), q = qmul([Math.cos(ang / 2), axis[0] * s, axis[1] * s, axis[2] * s], handQ);
+  const n = Math.hypot(...q);
+  for (let i = 0; i < 4; i++) handQ[i] = q[i] / n;
+}
+function bindStick(id) {
+  const el = $(id), knob = el.querySelector('.knob'), st = sticks[id];
+  const update = (e) => {
+    const r = el.getBoundingClientRect(), R = Math.min(r.width, r.height) * 0.36;
+    let dx = (e.clientX - (r.left + r.width / 2)) / R, dy = (e.clientY - (r.top + r.height / 2)) / R;
+    const n = Math.hypot(dx, dy);
+    if (n > 1) { dx /= n; dy /= n; }
+    st.x = dx; st.y = -dy;                                        // (up on the screen = +y)
+    knob.style.transform = `translate(${dx * R}px, ${dy * R}px)`;
+  };
+  el.addEventListener('pointerdown', (e) => {
+    if (st.id !== null) return;
+    st.id = e.pointerId; el.setPointerCapture(e.pointerId); el.classList.add('on'); update(e); vibrate(10);
+  });
+  el.addEventListener('pointermove', (e) => { if (e.pointerId === st.id) update(e); });
+  const end = (e) => {
+    if (e.pointerId !== st.id) return;
+    st.id = null; st.x = st.y = 0; knob.style.transform = ''; el.classList.remove('on');
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+}
+bindStick('stL'); bindStick('stR');
+const shape = (v) => { const a = Math.abs(v); return a < DEAD ? 0 : Math.sign(v) * ((a - DEAD) / (1 - DEAD)) ** 2; };  // fine near the middle
+let lastTouch = performance.now();
+setInterval(() => {
+  if (!touchMode || !wsOpen) return;
+  const now = performance.now(), dt = Math.min(0.05, (now - lastTouch) / 1000);
+  lastTouch = now;
+  const L = { x: shape(sticks.stL.x), y: shape(sticks.stL.y) }, R = { x: shape(sticks.stR.x), y: shape(sticks.stR.y) };
+  const vy = status.view_yaw ?? 0, fwd = [Math.cos(vy), Math.sin(vy), 0], left = [-Math.sin(vy), Math.cos(vy), 0];
+  for (let i = 0; i < 3; i++) hand[i] += (fwd[i] * L.y - left[i] * L.x) * SPEED * dt;
+  const full = status.rotation === 'full';
+  if (tiltOn && full) { turnAbout(left, -R.y * TURN * dt); turnAbout(fwd, R.x * TURN * dt); }
+  else { hand[2] += R.y * SPEED * dt; turnAbout([0, 0, 1], -R.x * TURN * dt); }
+  const active = L.x || L.y || R.x || R.y;
+  ws.send(JSON.stringify({ type: 'input', t: now / 1000, head: null, left: null,
+    right: { pose: [...hand, ...handQ], grip: active ? 1 : 0, stick: [0, closed ? 1 : -1], buttons: [], epoch } }));
+}, 16);
+$('startTouch').addEventListener('click', () => {
+  touchMode = true;
+  vibrate(30);
+  $('intro').classList.add('hidden');
+  $('overlay').classList.remove('hidden');
+  $('pad').classList.add('hidden');
+  $('sticks').classList.remove('hidden');
+  $('trk').classList.add('hidden');
+  $('tilt').textContent = 'Tilt level: tap TILT, then tilt and twist with the right stick';
+  // RE-CENTER isn't needed with joysticks: the button becomes TILT (levels with full rotation)
+  const rc = $('recenter');
+  rc.lastChild.textContent = 'TILT';
+  rc.addEventListener('click', (e) => {
+    if (!touchMode) return;
+    if (status.rotation !== 'full') { tiltOn = false; rc.classList.remove('tilt-on'); return; }
+    tiltOn = !tiltOn; rc.classList.toggle('tilt-on', tiltOn);
+    $('stRT').textContent = tiltOn ? 'TILT · TWIST' : 'UP / DOWN · TURN';
   });
 });
