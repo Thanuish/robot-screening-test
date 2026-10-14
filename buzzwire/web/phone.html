@@ -98,6 +98,9 @@
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 10px;
       font-weight: 800; letter-spacing: .12em; color: #cfd5df; }
     #recenter svg { width: 30px; height: 30px; }
+    #lost { position: fixed; left: 12px; right: 12px; top: 30%; padding: 20px; border-radius: 20px; text-align: center;
+      background: rgba(40, 26, 8, .94); border: 2px solid #ffb02e; pointer-events: none; z-index: 5; }
+    #lost h2 { margin: 6px 0; color: #ffcf7a; } #lost p { margin: 0; color: #f0e6d6; }
     #done { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center;
       background: radial-gradient(100% 70% at 50% 30%, #173a2b, var(--bg) 70%); }
     #done h2 { font-size: 30px; margin: 10px 0; } #done p { color: #cfd5df; }
@@ -154,6 +157,10 @@
     </div>
   </div>
   <div id="flash"></div>
+  <div id="lost" class="hidden"><div>
+    <div style="font-size:46px">📷</div><h2>Tracking lost</h2>
+    <p>Point the back camera at your desk or the computer screen (not a blank wall or the ceiling), keep your
+    fingers off the lens, and move a little slower. It comes back by itself.</p></div></div>
   <div id="done" class="hidden"><div>
     <svg viewBox="0 0 64 64" width="84" height="84" fill="none"><circle cx="32" cy="32" r="28" stroke="#2fdc7f" stroke-width="4"/><path d="M19 33l9 9 17-19" stroke="#2fdc7f" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
     <h2>All done!</h2><p>Thank you for playing. You can put the phone down and close this page.</p></div></div>

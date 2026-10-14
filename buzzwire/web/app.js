@@ -383,7 +383,8 @@ function onStatus(s) {
                 $('loading').classList.add('hidden'); $('pair').classList.add('hidden'); $('done').classList.add('hidden'); }
   }
   $('phoneChip').classList.toggle('ok', s.phone);
-  $('phoneT').textContent = s.phone ? 'Phone connected' : 'Phone not connected';
+  $('phoneT').textContent = s.phone ? 'Phone connected' : s.tracking_lost ? 'Phone: tracking lost' : 'Phone not connected';
+  $('lost').classList.toggle('hidden', !s.tracking_lost);
   if (menu) { showMenu(s); return; }
   $('lvlK').textContent = `${s.game_title} · Level ${s.index + 1} of ${s.count}`;
   $('title').textContent = s.title.replace(/^Level \d+:\s*/, '');

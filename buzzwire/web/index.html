@@ -58,6 +58,9 @@
     #done .card { padding: 34px 44px; text-align: center; max-width: 520px; }
     #done h2 { font-size: 34px; margin: 10px 0 6px; }
     .hidden { display: none !important; }
+    #lost { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 30; pointer-events: none; }
+    #lost .card { padding: 22px 28px; max-width: 520px; text-align: center; border-color: rgba(255,176,46,.6); }
+    #lost .big { font-size: 40px; } #lost h2 { margin: 6px 0; color: #ffcf7a; } #lost p { color: #d6dbe4; margin: 0; }
     /* the menu */
     #menu { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(90% 80% at 50% 35%, rgba(10,14,22,.35), rgba(5,6,9,.88)); }
     #menu .wrap { width: min(1080px, 92vw); text-align: center; }
@@ -98,6 +101,9 @@
   <div id="count"></div>
   <div id="toast"></div>
   <div id="flash"></div>
+  <div id="lost" class="hidden"><div class="glass card"><div class="big">📷</div><h2>The phone lost track of where it is</h2>
+    <p>Point its back camera at your desk or this screen (not a blank wall or the ceiling), keep your fingers off
+    the lens, use a well-lit room, and move a little slower. It picks up again by itself.</p></div></div>
   <div class="glass hidden" id="steps"><div class="lab">To do</div><div id="stepList"></div></div>
   <div id="corner"><span id="fps"></span><button id="restart" title="Start this game again from level 1">Restart</button><button id="toMenu" title="Back to the game menu">Menu</button></div>
   <div id="menu" class="hidden"><div class="wrap">

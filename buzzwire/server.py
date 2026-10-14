@@ -66,6 +66,7 @@ class Server:
         self.cfg = C.load()
         self.clients: set[web.WebSocketResponse] = set()
         self.phone_seen = 0.0                 # when the phone last sent its pose
+        self.phone_msg = 0.0                  # when the phone last sent anything (with or without a pose)
         self.rtf = 1.0                        # simulated seconds per real second (measured by run())
         self.scene_id = -1                    # bumped with every new scene (browsers reload it)
         self.game = None                      # None: the menu
@@ -154,12 +155,16 @@ class Server:
         return head.tobytes() + P.tobytes() + np.array(ghost, np.float32).tobytes()
 
     def status(self) -> dict:
-        phone = time.perf_counter() - self.phone_seen < 1.5
+        now = time.perf_counter()
+        phone = now - self.phone_seen < 1.5
+        # the phone is there but doesn't know where it is (its camera sees too little)
+        lost = now - self.phone_msg < 1.5 and not phone
         if self.game is None:
-            return dict(type="status", state="menu", phone=phone, scene_id=self.scene_id, rtf=1.0,
+            return dict(type="status", state="menu", phone=phone, tracking_lost=lost, scene_id=self.scene_id, rtf=1.0,
                         games=[dict(key=k, title=v[1], text=v[2]) for k, v in GAMES.items()])
         st = self.game.status()
-        st.update(type="status", scene_id=self.scene_id, rtf=round(self.rtf, 2), scores=None, phone=phone)
+        st.update(type="status", scene_id=self.scene_id, rtf=round(self.rtf, 2), scores=None, phone=phone,
+                  tracking_lost=lost)
         return st
 
     def level_geometry(self) -> dict:
@@ -235,6 +240,7 @@ class Server:
                     t = m.get("type")
                     if t == "input":
                         self.game.set_input(m)
+                        self.phone_msg = time.perf_counter()
                         if (m.get("right") or {}).get("pose"):
                             self.phone_seen = time.perf_counter()
                         n_in += 1

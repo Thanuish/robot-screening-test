@@ -244,7 +244,8 @@ $('start').addEventListener('click', async () => {
     if (tracked !== wasTracked) {
       wasTracked = tracked;
       $('trk').classList.toggle('ok', tracked);
-      $('trkT').textContent = tracked ? 'Tracking' : 'Tracking lost: move slowly';
+      $('trkT').textContent = tracked ? 'Tracking' : 'Tracking lost';
+      $('lost').classList.toggle('hidden', tracked);
       if (!tracked) vibrate([20, 40, 20]);
     }
     if (t - lastSend >= 15) { send(pose, tracked); lastSend = t; }     // ~60 messages a second
