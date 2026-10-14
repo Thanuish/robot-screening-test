@@ -32,6 +32,13 @@ from . import config as C
 from .cubes import CubesGame
 from .game import BuzzWireGame
 from .tower import TowerGame
+from . import candidates as CAND
+from .session import Session
+
+NOT_FOUND = ("<!doctype html><meta name=viewport content='width=device-width'><body style='font:16px system-ui;"
+             "background:#0b0d12;color:#eee;display:grid;place-items:center;height:100vh;margin:0'>"
+             "<div style='max-width:420px;text-align:center'><h2>This link isn't valid</h2><p>Please check the "
+             "link in your invitation e-mail, or contact us.</p></div>")
 
 GAMES = {   # key: (class, title, one line for the menu)
     "wire": (BuzzWireGame, "Buzz Wire", "Slide the ring along the wire without touching it."),
@@ -71,7 +78,9 @@ class Server:
         self.phone_msg = 0.0                  # when the phone last sent anything (with or without a pose)
         self.rtf = 1.0                        # simulated seconds per real second (measured by run())
         self.scene_id = -1                    # bumped with every new scene (browsers reload it)
-        self.game = None                      # None: the menu
+        self._level = None                    # (game, level, scene) last sent to the browsers
+        self._game = None                     # the game chosen in the menu (None: the menu)
+        self.session = None                   # a candidate's test (session.py); its game is shown instead
         self.view_yaw = 0.0
         self.kind = None
         if args.game:
@@ -84,20 +93,40 @@ class Server:
             return
         out = DATA / f"{time.strftime('%Y-%m-%d_%H-%M-%S')}_{kind}"
         levels = self.args.levels if kind == (self.args.game or kind) else None
-        self.game = GAMES[kind][0](self.cfg, levels=levels, out_dir=out, player=self.args.player)
+        self.session = None
+        self._game = GAMES[kind][0](self.cfg, levels=levels, out_dir=out, player=self.args.player)
         self.kind = kind
         self.game.view_yaw = self.view_yaw            # (the screen's camera heading, for the phone's "forward")
         self._export()
         print(f"[game] {GAMES[kind][1]}", flush=True)
 
     def to_menu(self):
-        self.game = None
+        self._game = None
+        self.session = None
+
+    @property
+    def game(self):
+        """The game being played: the candidate's current task, or the one chosen in the menu."""
+        return self.session.game if self.session is not None else self._game
+
+    def join(self, code: str, device: str = "") -> bool:
+        """A candidate opened their personal link: their test (continued if it's already running)."""
+        c = CAND.get(code)
+        if c is None:
+            return False
+        code = code.strip().upper()
+        if self.session is None or self.session.code != code:
+            self.session = Session(self.cfg, code, c["name"], CAND.folder(code) / time.strftime("%Y-%m-%d_%H-%M-%S"))
+            CAND.update(code, status="started", attempts=c.get("attempts", 0) + 1,
+                        last_started=time.strftime("%Y-%m-%d %H:%M"))
+            print(f"[candidate] {code} {c['name']}: the test starts", flush=True)
+        return True
 
     def _export(self):
         g = self.game
         self.bodies, self.scene_gz = export_scene(g.m)
         self.scene_id += 1
-        self._level = (g.li, id(g.sc))
+        self._level = (id(g), g.li, id(g.sc))
 
     # ---------------------------------------------------------------- the real-time loop
     async def run(self):
@@ -124,14 +153,24 @@ class Server:
         rtf_w, rtf_t, self.rtf = time.perf_counter(), 0, 1.0
         while True:
             g = self.game
-            if g is None:                             # the menu: only the status, 10 times a second
+            if g is None:                             # the menu, or a candidate between tasks: only the status
                 await self.broadcast(dumps(self.status()))
                 await asyncio.sleep(0.1)
                 t0, tick0, rtf_t, rtf_w = time.perf_counter(), 0, 0, time.perf_counter()
                 continue
-            if (g.li, id(g.sc)) != self._level:
-                self._export()                        # a new level: new geometry for the browsers
-            g.step()
+            if (id(g), g.li, id(g.sc)) != self._level:
+                self._export()                        # a new level or game: new geometry for the browsers
+            if self.session is not None:
+                stage = self.session.stage
+                self.session.tick()                   # (steps the task's game; moves the test along)
+                if self.session.stage != stage:
+                    print(f"[candidate] {self.session.code}: {self.session.stage}", flush=True)
+                    if self.session.stage == "done":
+                        CAND.update(self.session.code, status="done", finished=time.strftime("%Y-%m-%d %H:%M"))
+                if self.game is not g:
+                    continue
+            else:
+                g.step()
             tick0 += 1
             if tick0 % POSE_EVERY == 0:
                 await self.broadcast(self.pose_packet())
@@ -163,18 +202,26 @@ class Server:
         phone = now - self.phone_seen < 1.5
         # the phone is there but doesn't know where it is (its camera sees too little)
         lost = now - self.phone_msg < 1.5 and not phone
+        common = dict(type="status", phone=phone, tracking_lost=lost, scene_id=self.scene_id, view_yaw=self.view_yaw)
+        if self.session is not None:
+            ss = self.session
+            st = self.game.status() if self.game is not None else dict(state=ss.stage, hud=[], steps=[])
+            if ss.stage == "assessment":
+                st.update(hud=[], steps=[], instruction="", message="")   # (nothing on the screen but the timer)
+            st.update(ss.status())
+            st.update(common, rtf=round(self.rtf, 2))
+            return st
         if self.game is None:
-            return dict(type="status", state="menu", phone=phone, tracking_lost=lost, scene_id=self.scene_id, rtf=1.0,
+            return dict(common, state="menu", rtf=1.0,
                         games=[dict(key=k, title=v[1], text=v[2]) for k, v in GAMES.items()])
         st = self.game.status()
-        st.update(type="status", scene_id=self.scene_id, rtf=round(self.rtf, 2), scores=None, phone=phone,
-                  tracking_lost=lost)
+        st.update(common, rtf=round(self.rtf, 2), scores=None)
         return st
 
     def level_geometry(self) -> dict:
         """The current level's shapes for the browser to draw finely (the physics uses simple ones)."""
         if self.game is None:
-            return dict(kind="menu", scene_id=self.scene_id, table_z=C.TABLE_Z)
+            return dict(kind="none", scene_id=self.scene_id, table_z=C.TABLE_Z)
         return dict(self.game.level_geometry(), scene_id=self.scene_id, table_z=C.TABLE_Z)
 
     async def broadcast(self, msg):
@@ -222,7 +269,8 @@ class Server:
         async def qr(request):
             import segno
             buf = io.BytesIO()
-            page = "/iphone" if request.query.get("for") == "iphone" else "/phone"
+            f = request.query.get("for")
+            page = f"/p/{request.query.get('c', '')}" if f == "candidate" else "/iphone" if f == "iphone" else "/phone"
             segno.make(self.phone_url(page) or "no public address", error="m").save(buf, kind="svg", scale=6, border=2)
             return web.Response(body=buf.getvalue(), content_type="image/svg+xml")
 
@@ -256,6 +304,19 @@ class Server:
         app.router.add_get("/", index)
         app.router.add_get("/phone", phone)
         app.router.add_get("/iphone", lambda _: web.FileResponse(WEB / "apple" / "index.html"))
+
+        async def candidate_page(request):            # the personal link: the game screen in test mode
+            if CAND.get(request.match_info["code"]) is None:
+                return web.Response(status=404, content_type="text/html", text=NOT_FOUND)
+            return web.FileResponse(WEB / "index.html")
+
+        async def phone_for(request):                 # the phone's link: the right controller for it
+            code = request.match_info["code"]
+            ua = request.headers.get("User-Agent", "")
+            page = "/iphone" if ("iPhone" in ua or "iPad" in ua or "Macintosh" in ua and "Mobile" in ua) else "/phone"
+            raise web.HTTPFound(f"{page}?c={code}")
+        app.router.add_get("/c/{code}", candidate_page)
+        app.router.add_get("/p/{code}", phone_for)
         app.router.add_get("/scene.json", scene)
         app.router.add_get("/config.json", config)
         app.router.add_get("/level.json", level)
@@ -281,6 +342,8 @@ class Server:
         if t == "input":
             if self.game is not None:                # (the menu: no robot to move)
                 self.game.set_input(m)
+            if self.session is not None and who in ("phone", "iphone") and not self.session.res.get("device"):
+                self.session.res["device"] = "iPhone" if who == "iphone" else "Android"
             self.phone_msg = time.perf_counter()
             if (m.get("right") or {}).get("pose"):
                 self.phone_seen = time.perf_counter()
@@ -305,6 +368,13 @@ class Server:
             self.new_game(str(m.get("game")))
         elif t == "menu":
             self.to_menu()
+        elif t == "join":                            # a candidate's computer screen
+            ok = self.join(str(m.get("code", "")))
+            await ws.send_str(json.dumps({"type": "joined", "ok": ok}))
+        elif t == "begin" and self.session is not None:
+            self.session.begin(str(m.get("name", ""))[:80])
+        elif t == "ready" and self.session is not None:
+            self.session.choose(str(m.get("choice", "")))
 
     def phone_url(self, page: str = "/phone") -> str | None:
         try:

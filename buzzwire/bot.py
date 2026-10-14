@@ -56,11 +56,13 @@ class Bot:
         self.g.set_input({"right": {"pose": list(map(float, p)) + list(map(float, q)), "grip": self.grip,
                                     "stick": [0.0, 1.0 if self.closed else -1.0], "epoch": 0}})
 
+    step_fn = None                    # (a candidate session steps through Session.tick instead)
+
     def run_ticks(self, n):
         for _ in range(n):
             if self.g.finished:
                 return
-            self.g.step()
+            (self.step_fn or self.g.step)()
 
     def engage(self):
         """Press MOVE with the hand at rest; remember where the arm's target was."""

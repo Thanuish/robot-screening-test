@@ -151,7 +151,7 @@ def load(p=None) -> Config:
 def parse(raw: dict, p="<config>") -> Config:
     c = _Checker()
     c.keys(raw, "file", ("version", "robot", "controls", "physics", "view", "board", "wire", "wand",
-                         "scoring", "levels", "cubes", "tower"), required=("levels",))
+                         "scoring", "levels", "cubes", "tower", "flow"), required=("levels",))
     if raw.get("version", 1) != 1:
         c.err("version", f"this program reads version 1, the file says {raw.get('version')!r}")
 
@@ -180,9 +180,10 @@ def parse(raw: dict, p="<config>") -> Config:
     if abs(steps - round(steps)) > 1e-6:
         c.err("physics", f"1 / (control_hz x timestep) should be a whole number of physics steps, got {steps:.3f}")
     v = raw.get("view", {})
-    c.keys(v, "view", ("eye", "look_at", "fov_deg"))
-    view = dict(eye=c.vec(v, "eye", "view", 3, [1.15, -0.30, 1.22]), look=c.vec(v, "look_at", "view", 3, [0.47, 0.0, 0.87]),
-                fov=c.num(v, "fov_deg", "view", 42, lo=20, hi=120))
+    c.keys(v, "view", ("eye", "look_at", "fov_deg", "arm_opacity"))
+    view = dict(eye=c.vec(v, "eye", "view", 3, [-0.75, -0.15, 1.95]), look=c.vec(v, "look_at", "view", 3, [0.5, 0.0, 0.8]),
+                fov=c.num(v, "fov_deg", "view", 45, lo=20, hi=120),
+                arm_opacity=c.num(v, "arm_opacity", "view", 0.35, lo=0.05, hi=1.0))
     b = raw.get("board", {})
     c.keys(b, "board", ("center", "size"))
     board = dict(center=c.vec(b, "center", "board", 2, [0.5, 0.0]), size=c.vec(b, "size", "board", 3, [0.16, 0.56, 0.02], lo=0.005))
@@ -264,6 +265,7 @@ def parse(raw: dict, p="<config>") -> Config:
     elif not any(lv.scored for lv in levels):
         c.err("levels", "no level is scored = true")
     games = dict(cubes=_cubes(c, raw.get("cubes", {})), tower=_tower(c, raw.get("tower", {}), robot))
+    games["flow"] = _flow(c, raw.get("flow", {}), levels, games)
     if c.problems:
         raise ConfigError(p, c.problems)
     return Config(path=Path(p), robot=robot, controls=controls, physics=physics, view=view, board=board,
@@ -288,6 +290,32 @@ def _color(c: _Checker, v, where):
             pass
     c.err(where, f"should be a colour \"#rrggbb\", got {v!r}")
     return [0.7, 0.7, 0.7, 1.0]
+
+
+def _flow(c: _Checker, raw: dict, wire_levels: list, games: dict) -> dict:
+    """[flow]: the candidate's test: practice tasks, how often, the assessment's tasks."""
+    c.keys(raw, "flow", ("practice", "max_practice_rounds", "assessment", "card_seconds"))
+    known = {"wire": [lv.key for lv in wire_levels], "tower": [lv["key"] for lv in games["tower"]["levels"]],
+             "cubes": None}                       # (cubes: the phases of config/screening.toml, checked when used)
+
+    def tasks(key, default):
+        out = []
+        for t in raw.get(key, default):
+            if not isinstance(t, str) or ":" not in t:
+                c.err(f"flow.{key}", f"{t!r}: should be \"game:level\", e.g. \"wire:curves\"")
+                continue
+            g, lv = t.split(":", 1)
+            if g not in known:
+                c.err(f"flow.{key}", f"{t!r}: no game '{g}' (wire, cubes, tower)")
+            elif known[g] is not None and lv not in known[g]:
+                c.err(f"flow.{key}", f"{t!r}: game '{g}' has no level '{lv}' ({', '.join(known[g])})")
+            else:
+                out.append((g, lv))
+        return out
+    return dict(practice=tasks("practice", ["wire:straight", "tower:practice"]),
+                max_practice_rounds=c.num(raw, "max_practice_rounds", "flow", 3, lo=1, hi=20, integer=True),
+                assessment=tasks("assessment", ["cubes:shapes", "cubes:sort", "wire:curves", "tower:cubes"]),
+                card_seconds=c.num(raw, "card_seconds", "flow", 8, lo=0, hi=60))
 
 
 def _tower(c: _Checker, raw: dict, robot: dict) -> dict:

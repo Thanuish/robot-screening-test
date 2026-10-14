@@ -40,10 +40,12 @@ control_hz = 100               # the arm's target is updated this often
 touch_debounce_s = 0.05        # contact lost for less than this still counts as one touch
 
 # ---------------------------------------------------------------------------- what the player sees
-[view]                         # like a player standing at the board, the robot behind it
-eye = [1.30, -0.36, 1.30]      # camera position [x, y, z]: in front of the board, a little to the right, above
-look_at = [0.42, 0.0, 0.90]    # the point it looks at (the wire, the robot behind it)
-fov_deg = 42
+[view]                         # standing behind the robot, looking over it at the table
+eye = [-0.75, -0.15, 1.95]     # camera position [x, y, z]: behind the robot's base, high
+look_at = [0.50, 0.0, 0.80]    # the point it looks at (the work area)
+fov_deg = 45
+arm_opacity = 0.35             # the arm's big links (shoulder, upper arm, forearm) see-through, so they
+                               # don't hide the work area (1 = solid); the wrist and gripper stay solid
 
 # ---------------------------------------------------------------------------- the board, wire and wand
 [board]                        # the wooden base the wire posts stand on
@@ -153,6 +155,18 @@ friction = [1.0, 0.01, 0.001]          # sliding, twisting, rolling (wood on woo
 table_clearance = 0.015
 
 [[tower.levels]]
+key = "practice"
+title = "Practice: a small tower"
+text = "Take each cube from the yellow spot and stack it on the wooden platform. Lower it gently, then RELEASE."
+scored = false
+time_limit_s = 150
+rotation = "yaw"
+target_height = 0.15
+blocks = [{ size = [0.05, 0.05, 0.05], color = "#e63946" },
+          { size = [0.05, 0.05, 0.05], color = "#e9c46a" },
+          { size = [0.05, 0.05, 0.05], color = "#457b9d" }]
+
+[[tower.levels]]
 key = "cubes"
 title = "Tower 1: cubes"
 text = "Pick up each cube as it appears and stack them on the wooden platform. Build as high as you can!"
@@ -182,3 +196,15 @@ blocks = [{ size = [0.10, 0.05, 0.04], color = "#e63946" },
           { size = [0.10, 0.05, 0.04], color = "#457b9d" },
           { size = [0.06, 0.06, 0.03], color = "#8e5bd8" },
           { size = [0.05, 0.05, 0.05], color = "#ef476f" }]
+
+# =============================================================================================
+#  The candidate's test (one personal link): welcome -> connect the phone -> tutorial ->
+#  practice -> "ready?" (start the assessment, or practise again) -> assessment -> thank you.
+#  Tasks are "game:level" (games: wire, cubes, tower; levels: the keys above, or the phases of
+#  config/screening.toml for cubes). During the assessment the screen shows only a thin timer.
+# =============================================================================================
+[flow]
+practice = ["wire:straight", "tower:practice"]          # after the tutorial; may be repeated
+max_practice_rounds = 3                                 # rounds of practice a candidate may do
+assessment = ["cubes:shapes", "cubes:sort", "wire:curves", "tower:cubes"]
+card_seconds = 8                                        # the task card before each assessment task

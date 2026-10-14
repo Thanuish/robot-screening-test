@@ -52,7 +52,7 @@
     #pair .url a { color: #8fd8ff; }
     #flash { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .06s;
       box-shadow: inset 0 0 160px 40px rgba(255, 30, 50, .85); }
-    #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #07080b; color: var(--dim);
+    #loading { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; background: #07080b; color: var(--dim);
       font-size: 14px; letter-spacing: .2em; text-transform: uppercase; transition: opacity .6s; }
     #corner { position: fixed; right: 16px; bottom: 22px; font-size: 11px; color: #6c7584; text-align: right; }
     #corner button { background: none; border: 1px solid #2c3340; color: #8a93a2; border-radius: 8px; padding: 4px 9px; cursor: pointer; font-size: 11px; margin-left: 6px; }
@@ -86,6 +86,38 @@
     #steps div.s i { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #4a5263; flex: 0 0 18px; display: grid; place-items: center; font-style: normal; font-size: 11px; }
     #steps div.s.ok { color: #d6ffe9; } #steps div.s.ok i { background: var(--go); border-color: var(--go); color: #062; }
     #done .btn { margin-top: 18px; background: linear-gradient(135deg, #36c2ff, #7b5cff); color: #fff; border: 0; border-radius: 12px; padding: 12px 22px; font: 800 14px system-ui; letter-spacing: .12em; cursor: pointer; }
+    /* ---------- the candidate's test (/c/<code>) */
+    .cover { position: fixed; inset: 0; display: grid; place-items: center; z-index: 20;
+      background: radial-gradient(90% 80% at 50% 35%, rgba(10,14,22,.55), rgba(5,6,9,.9)); }
+    .cover .card { padding: 30px 34px; max-width: 600px; width: calc(100% - 40px); box-sizing: border-box; }
+    .cover h1 { margin: 4px 0 8px; font-size: 30px; font-weight: 900; }
+    .cover p { color: #cfd6e1; margin: 8px 0; }
+    .cover .lab { color: var(--accent); }
+    .cover label { color: #cfd6e1; font-size: 14px; }
+    .cover input[type=text] { width: 100%; box-sizing: border-box; padding: 12px 14px; margin: 6px 0 12px; font: inherit;
+      background: #0f131a; color: #eee; border: 1px solid #39404f; border-radius: 10px; }
+    .cover label.chk { display: flex; gap: 10px; align-items: flex-start; margin: 10px 0 18px; }
+    .cover label.chk input { margin-top: 3px; width: 18px; height: 18px; flex: 0 0 18px; }
+    .btns { display: flex; gap: 12px; flex-wrap: wrap; }
+    .bigbtn { flex: 1; min-width: 200px; padding: 16px 20px; border-radius: 14px; font: 900 16px system-ui; letter-spacing: .08em;
+      text-transform: uppercase; cursor: pointer; border: 0; color: #fff; background: linear-gradient(135deg, #36c2ff, #7b5cff);
+      box-shadow: 0 10px 30px rgba(54,120,255,.35); }
+    .bigbtn.go { background: linear-gradient(135deg, #2fdc7f, #19a35b); box-shadow: 0 10px 30px rgba(47,220,127,.35); }
+    .bigbtn.ghost { background: #232835; border: 1px solid #39404f; box-shadow: none; }
+    .bigbtn:disabled { opacity: .45; cursor: default; }
+    .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0 6px; }
+    .facts div { background: rgba(255,255,255,.05); border-radius: 12px; padding: 10px 12px; font-size: 13px; color: #cfd6e1; }
+    .facts b { display: block; color: #fff; font-size: 16px; }
+    #card .count { font: 900 54px/1 system-ui; color: #fff; margin-top: 12px; text-align: center; }
+    #card .sub { font-size: 24px; font-weight: 900; color: #9fdcff; margin-top: 0; }
+    #instr { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); width: min(720px, 90vw); padding: 16px 22px;
+      text-align: center; font-size: 19px; font-weight: 700; border-color: rgba(54,194,255,.45); z-index: 12; }
+    #instr .lab { color: var(--accent); margin-bottom: 4px; }
+    #thin { position: fixed; top: 0; left: 50%; transform: translateX(-50%); padding: 4px 16px 5px; border-radius: 0 0 12px 12px;
+      background: rgba(8,10,14,.55); font: 700 15px/1.2 ui-monospace, Menlo, monospace; color: #e8edf5; z-index: 15; pointer-events: none; }
+    #thin.low { color: #ffb02e; }
+    #pair1 img { width: 240px; height: 240px; background: #fff; border-radius: 14px; padding: 8px; box-sizing: border-box; display: block; margin: 10px auto; }
+    #done { z-index: 25; }
   </style>
   <script type="importmap">
   { "imports": { "three": "/vendor/three/build/three.module.js",
@@ -127,8 +159,40 @@
   </div></div>
   <div id="done" class="hidden"><div class="glass card">
     <svg viewBox="0 0 64 64" width="84" height="84" fill="none"><circle cx="32" cy="32" r="28" stroke="#2fdc7f" stroke-width="4"/><path d="M19 33l9 9 17-19" stroke="#2fdc7f" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <h2>All levels complete</h2><p style="color:#cfd6e1">Thank you for playing. Your attempt has been saved.</p>
+    <h2 id="doneT">All levels complete</h2><p style="color:#cfd6e1" id="doneP">Thank you for playing. Your attempt has been saved.</p>
     <button class="btn" id="doneMenu">BACK TO THE MENU</button></div></div>
+  <!-- the candidate's test -->
+  <div id="welcome" class="cover hidden"><div class="glass card">
+    <div class="lab">Welcome</div><h1>Robot control assessment</h1>
+    <p>You'll control a real robot arm (a simulation of it) from your phone and watch it on this screen. First a short
+      tutorial and practice, then the assessment. It takes about 25 minutes.</p>
+    <div class="facts"><div><b>1. Tutorial</b>learn the controls</div><div><b>2. Practice</b>as often as you like (up to 3 rounds)</div><div><b>3. Assessment</b>4 short tasks</div></div>
+    <p>You need this computer and your phone (iPhone or Android), both connected to the internet.</p>
+    <label>Your name</label><input type="text" id="wName" autocomplete="name">
+    <label class="chk"><input type="checkbox" id="wConsent"><span>I agree that my control of the robot is recorded and scored for my
+      application. The recording is used only to evaluate this assessment.</span></label>
+    <div class="btns"><button class="bigbtn go" id="wStart" disabled>Start</button></div>
+  </div></div>
+  <div id="pair1" class="cover hidden"><div class="glass card" style="text-align:center">
+    <div class="lab">Step 1</div><h1>Connect your phone</h1>
+    <p>Open your phone's <b>camera</b> and point it at this code. Tap the link that appears, then tap
+      <b>PLAY WITH TOUCH CONTROLS</b>.</p>
+    <img id="qr1" alt="QR code for your phone"><div class="url" id="url1" style="font-size:12px;color:var(--dim);word-break:break-all"></div>
+  </div></div>
+  <div id="instr" class="glass hidden"><div class="lab">Tutorial</div><div id="instrT"></div></div>
+  <div id="ready" class="cover hidden"><div class="glass card">
+    <div class="lab">Practice done</div><h1>Ready for the assessment?</h1>
+    <p>The assessment has <b id="rTasks">4</b> short tasks. Each starts with a card that tells you what to do; while you play, the
+      screen shows only the robot and a small timer. Your results aren't shown.</p>
+    <p id="rRounds" style="color:var(--dim)"></p>
+    <div class="btns"><button class="bigbtn ghost" id="rPractice">Practise again</button>
+      <button class="bigbtn go" id="rAssess">Start the assessment</button></div>
+  </div></div>
+  <div id="card" class="cover hidden"><div class="glass card">
+    <div class="lab" id="cTitle"></div><h1 class="sub" id="cSub"></h1><p id="cText"></p>
+    <p style="color:var(--dim)" id="cLimit"></p><div class="count" id="cCount"></div>
+  </div></div>
+  <div id="thin" class="hidden">0:00</div>
   <div id="loading">Loading the lab…</div>
   <script type="module" src="/static/app.js"></script>
 </body>

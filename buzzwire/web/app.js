@@ -242,20 +242,57 @@ async function loadScene(id) {
     if (name === 'wand') b.add(wand(L));
     return b;
   });
+  // the arm's big links see-through ([view] arm_opacity), so they don't hide the work area
+  const SEE_THROUGH = /^ur_(shoulder_link|upper_arm_link|forearm_link|base)$/;
+  const ghost = new Map();
+  const ghostOf = (m) => {
+    if (!ghost.has(m)) { const c = m.clone(); c.transparent = true; c.opacity = cfg.view.arm_opacity ?? 1; c.depthWrite = false; ghost.set(m, c); }
+    return ghost.get(m);
+  };
   for (const g of j.geoms) {
     if (SKIP.test(g.name) || g.type === 'plane') continue;
     const geo = geometry(g, j.meshes);
     if (!geo) continue;
-    const mesh = new THREE.Mesh(geo, materialFor(g, j.materials));
+    let mat = materialFor(g, j.materials);
+    const seeThrough = SEE_THROUGH.test(j.bodies[g.body]) && (cfg.view.arm_opacity ?? 1) < 1;
+    if (seeThrough) mat = ghostOf(mat);
+    const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(...g.pos);
     mesh.quaternion.set(g.quat[1], g.quat[2], g.quat[3], g.quat[0]);
-    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.castShadow = !seeThrough; mesh.receiveShadow = true;
+    if (seeThrough) mesh.renderOrder = 2;
     bodies[g.body].add(mesh);
   }
   mj.add(simRoot);
+  gripBody = j.bodies.indexOf('ur_gripper_base');
   sceneId = id;
   $('loading').style.opacity = 0;
   setTimeout(() => $('loading').classList.add('hidden'), 700);
+}
+
+// ------------------------------------------------------------ depth cue: where the gripper would come down
+// A ring on the table straight below the gripper's fingertips and a thin line down to it; green when
+// the fingers are low enough to grab (no shadows are needed to judge the height).
+const cue = new THREE.Group();
+const cueMat = new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.85, depthTest: false });
+const cueRing = new THREE.Mesh(new THREE.RingGeometry(0.018, 0.026, 40), cueMat);
+const cueLineGeo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
+const cueLine = new THREE.Line(cueLineGeo, new THREE.LineBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.6, depthTest: false }));
+for (const o of [cueRing, cueLine]) { o.renderOrder = 10; o.frustumCulled = false; cue.add(o); }
+mj.add(cue);
+let gripBody = -1;
+const _p = new THREE.Vector3(), _ofs = new THREE.Vector3();
+function updateCue() {
+  if (gripBody < 0 || !bodies[gripBody]) { cue.visible = false; return; }
+  const b = bodies[gripBody];
+  _p.copy(b.position).add(_ofs.set(0, 0, 0.145).applyQuaternion(b.quaternion));   // the fingertips (14.5 cm from the gripper base)
+  const tz = 0.751, h = _p.z - tz;
+  cue.visible = h > 0 && h < 0.6;
+  cueRing.position.set(_p.x, _p.y, tz);
+  const a = cueLineGeo.attributes.position;
+  a.setXYZ(0, _p.x, _p.y, _p.z); a.setXYZ(1, _p.x, _p.y, tz); a.needsUpdate = true;
+  const c = h < 0.035 ? 0x4cd07d : 0xffd24a;
+  cueMat.color.setHex(c); cueLine.material.color.setHex(c);
 }
 
 // ------------------------------------------------------------ post-processing and quality
@@ -274,15 +311,18 @@ const QUALITY = {
   high: { ratio: Math.min(devicePixelRatio, 2), shadow: 4096, ao: true, bloom: true },
   standard: { ratio: Math.min(devicePixelRatio, 1.25), shadow: 2048, ao: false, bloom: false },
   low: { ratio: 1, shadow: 1024, ao: false, bloom: false },
+  lite: { ratio: 1, shadow: 0, ao: false, bloom: false },     // no shadows at all: the lightest
 };
 const forced = new URLSearchParams(location.search).get('q');
-let quality = QUALITY[forced] ? forced : 'low';         // light by default (?q=standard / ?q=high for more)
+let quality = QUALITY[forced] ? forced : 'lite';        // the lightest by default (?q=low / standard / high for more)
 let useComposer = false;                 // effects on: render through the composer, else directly
 function applyQuality() {
   const q = QUALITY[quality];
   renderer.setPixelRatio(q.ratio);
   composer.setPixelRatio(q.ratio);
-  if (key.shadow.mapSize.x !== q.shadow) {
+  renderer.shadowMap.enabled = q.shadow > 0;
+  key.castShadow = q.shadow > 0;
+  if (q.shadow > 0 && key.shadow.mapSize.x !== q.shadow) {
     key.shadow.mapSize.set(q.shadow, q.shadow);
     if (key.shadow.map) { key.shadow.map.dispose(); key.shadow.map = null; }
   }
@@ -332,13 +372,20 @@ function applySnaps() {
   }
 }
 
+// a candidate's personal link (/c/<code>): the test's screens, no developer controls
+const CAND = (location.pathname.match(/^\/c\/([A-Za-z0-9]+)/) || [])[1]?.toUpperCase() || null;
 let ws, status = {};
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { if (CAND) ws.send(JSON.stringify({ type: 'join', code: CAND })); };
   ws.onclose = () => setTimeout(connect, 1000);
   ws.onmessage = (ev) => {
-    if (typeof ev.data === 'string') { onStatus(JSON.parse(ev.data)); return; }
+    if (typeof ev.data === 'string') {
+      const m = JSON.parse(ev.data);
+      if (m.type === 'joined' && !m.ok) { document.body.innerHTML = '<div style="color:#eee;font:18px system-ui;display:grid;place-items:center;height:100vh">This link isn\'t valid. Please check your invitation e-mail.</div>'; return; }
+      onStatus(m); return;
+    }
     const f = new Float32Array(ev.data);
     const id = f[1], n = f[2];
     if (id !== sceneId) { if (id !== pendingScene) { pendingScene = id; loadScene(id); } return; }
@@ -373,6 +420,8 @@ function showMenu(s) {
 function onStatus(s) {
   if (s.type !== 'status') return;
   status = s;
+  if (CAND) candidateView(s);
+  if (CAND && s.level === undefined) return;          // (a candidate between tasks: no game on screen)
   const menu = s.state === 'menu';
   if (menu !== inMenu) {
     inMenu = menu;
@@ -413,6 +462,7 @@ function onStatus(s) {
       setTimeout(() => { if (!lastCount) $('count').textContent = ''; }, 800); }
     lastCount = c;
   }
+  if (CAND) { $('pair').classList.add('hidden'); if (s.stage === 'tutorial') $('timer').textContent = '--:--'; }
   if (s.message && s.message !== lastMsg) {
     $('toast').textContent = s.message; $('toast').classList.add('show');
     clearTimeout(toastT); toastT = setTimeout(() => $('toast').classList.remove('show'), 2200);
@@ -481,6 +531,7 @@ renderer.setAnimationLoop((now) => {
   if (shake > 0.01) { sx = (Math.random() - 0.5) * 0.004 * shake; sy = (Math.random() - 0.5) * 0.004 * shake; shake *= 0.85; }
   camera.position.x += sx; camera.position.y += sy;
   applySnaps();
+  updateCue();
   if (useComposer) composer.render(); else renderer.render(scene, camera);
   camera.position.x -= sx; camera.position.y -= sy;
   frames++;
@@ -490,8 +541,51 @@ renderer.setAnimationLoop((now) => {
     $('fps').textContent = `${Math.round(fps)} fps · ${quality}`;
     if (!forced && sceneId >= 0) {
       slow = fps < 45 ? slow + 1 : 0;
-      if (slow >= 2 && quality !== 'low') { quality = quality === 'high' ? 'standard' : 'low'; slow = 0; applyQuality(); }
+      if (slow >= 2 && quality !== 'lite') { quality = { high: 'standard', standard: 'low', low: 'lite' }[quality]; slow = 0; applyQuality(); }
     }
     if (now - reportT > 10000) { send({ type: 'fps', fps: Math.round(fps), quality, gpu }); reportT = now; }
   }
 });
+
+// ------------------------------------------------------------ the candidate's test (personal link)
+let welcomed = false;
+function show(id, on) { $(id).classList.toggle('hidden', !on); }
+function candidateView(s) {
+  const st = s.stage, assessing = st === 'assessment' && !s.card, playing = s.level !== undefined;
+  for (const id of ['menu', 'corner', 'pair']) show(id, false);
+  if (!playing) show('loading', false);              // (nothing to load between tasks: never cover the buttons)
+  show('welcome', st === 'welcome');
+  if (st === 'welcome' && !welcomed) { $('wName').value = s.name || ''; welcomed = true; }
+  show('pair1', st === 'tutorial' && !s.phone);
+  show('instr', st === 'tutorial' && !!s.instruction && s.phone);
+  if (s.instruction) $('instrT').textContent = s.instruction;
+  show('ready', st === 'ready');
+  if (st === 'ready') {
+    $('rRounds').textContent = `Practice rounds: ${s.round} of ${s.max_rounds}.` + (s.can_practice ? '' : ' (No more practice rounds.)');
+    $('rPractice').disabled = !s.can_practice;
+  }
+  show('card', st === 'assessment' && !!s.card);
+  if (s.card) {
+    $('cTitle').textContent = s.card_title || ''; $('cSub').textContent = (s.card_subtitle || '').replace(/^(Level|Task|Tower) \d+:\s*/, '');
+    $('cText').textContent = s.card_text || '';
+    $('cLimit').textContent = s.card_limit ? `Time: ${Math.round(s.card_limit / 60)} min. Starts by itself in:` : '';
+    $('cCount').textContent = Math.ceil(s.card_left);
+  }
+  // the assessment: only the robot and a thin timer
+  for (const id of ['top', 'progWrap', 'steps', 'phoneChip']) if (assessing || !playing) show(id, false); else if (id !== 'steps') show(id, true);
+  show('thin', assessing && s.state === 'play');
+  if (assessing && s.limit) { const left = Math.max(0, s.limit - s.time); $('thin').textContent = fmt(left); $('thin').classList.toggle('low', left < 20); }
+  if (st === 'done') { $('doneT').textContent = 'Thank you, your test is complete'; $('doneP').textContent = 'Your results have been saved. You can close this page and put your phone down.'; show('doneMenu', false); }
+  show('done', st === 'done');
+  if (assessing) $('flash').style.boxShadow = 'inset 0 0 60px 10px rgba(255, 30, 50, .7)';   // (a thinner glow: the view stays clear)
+}
+if (CAND) {
+  for (const id of ['menu', 'corner']) show(id, false);
+  $('qr1').src = `/qr.svg?for=candidate&c=${CAND}`;
+  fetch('/config.json').then(r => r.json()).then(c => { if (c.phone_url) $('url1').textContent = c.phone_url.replace(/\/phone$/, `/p/${CAND}`); });
+  const check = () => { $('wStart').disabled = !($('wConsent').checked && $('wName').value.trim()); };
+  $('wConsent').addEventListener('change', check); $('wName').addEventListener('input', check);
+  $('wStart').onclick = () => { ensureAudio(); send({ type: 'begin', name: $('wName').value.trim() }); };
+  $('rAssess').onclick = () => send({ type: 'ready', choice: 'assess' });
+  $('rPractice').onclick = () => send({ type: 'ready', choice: 'practice' });
+}
