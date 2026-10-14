@@ -65,11 +65,13 @@ class Server:
         self.args = args
         self.cfg = C.load()
         self.clients: set[web.WebSocketResponse] = set()
+        self.counts: dict = {}                # per connection: messages seen (for the log)
         self.phone_seen = 0.0                 # when the phone last sent its pose
         self.phone_msg = 0.0                  # when the phone last sent anything (with or without a pose)
         self.rtf = 1.0                        # simulated seconds per real second (measured by run())
         self.scene_id = -1                    # bumped with every new scene (browsers reload it)
         self.game = None                      # None: the menu
+        self.view_yaw = 0.0
         self.kind = None
         if args.game:
             self.new_game(args.game)
@@ -83,6 +85,7 @@ class Server:
         levels = self.args.levels if kind == (self.args.game or kind) else None
         self.game = GAMES[kind][0](self.cfg, levels=levels, out_dir=out, player=self.args.player)
         self.kind = kind
+        self.game.view_yaw = self.view_yaw            # (the screen's camera heading, for the phone's "forward")
         self._export()
         print(f"[game] {GAMES[kind][1]}", flush=True)
 
@@ -227,8 +230,7 @@ class Server:
             who = "phone" if "Android" in request.headers.get("User-Agent", "") else "browser"
             print(f"[ws] {who} connected ({len(self.clients)} open)", flush=True)
             await ws.send_str(dumps(self.status()))
-            n_in = 0
-            fps_n = 0
+            self.counts[ws] = {"in": 0, "fps": 0}
             try:
                 async for msg in ws:
                     if msg.type != WSMsgType.TEXT:
@@ -237,34 +239,13 @@ class Server:
                         m = json.loads(msg.data)
                     except json.JSONDecodeError:
                         continue
-                    t = m.get("type")
-                    if t == "input":
-                        self.game.set_input(m)
-                        self.phone_msg = time.perf_counter()
-                        if (m.get("right") or {}).get("pose"):
-                            self.phone_seen = time.perf_counter()
-                        n_in += 1
-                        if n_in in (1, 100) or n_in % 1000 == 0:
-                            c = m.get("right") or {}
-                            print(f"[input] {who}: {n_in} messages; MOVE {c.get('grip')} GRAB {c.get('stick')} "
-                                  f"state {self.game.state}", flush=True)
-                    elif t == "view":
-                        self.game.view_yaw = float(m.get("yaw", 0.0))
-                    elif t == "fps":                       # the game screen's frame rate, for the log
-                        fps_n += 1
-                        if fps_n % 6 == 1:
-                            print(f"[fps] {who}: {m.get('fps')} fps, quality {m.get('quality')}, "
-                                  f"{m.get('gpu', '')}", flush=True)
-                    elif t == "ping":
-                        await ws.send_str(json.dumps({"type": "pong", "t": m.get("t")}))
-                    elif t == "restart":
-                        self.new_game()
-                    elif t == "select":
-                        self.new_game(str(m.get("game")))
-                    elif t == "menu":
-                        self.to_menu()
+                    try:
+                        await self.handle(ws, who, m)
+                    except Exception:                    # one bad message must not drop the connection
+                        print(f"[error] message {str(m)[:120]}:\n{traceback.format_exc()}", flush=True)
             finally:
                 self.clients.discard(ws)
+                self.counts.pop(ws, None)
                 print(f"[ws] {who} disconnected", flush=True)
             return ws
 
@@ -287,6 +268,37 @@ class Server:
         app.on_startup.append(start)
         app.on_cleanup.append(stop)
         return app
+
+    async def handle(self, ws, who: str, m: dict):
+        """One message from a browser or the phone."""
+        t, n = m.get("type"), self.counts.setdefault(ws, {"in": 0, "fps": 0})
+        if t == "input":
+            if self.game is not None:                # (the menu: no robot to move)
+                self.game.set_input(m)
+            self.phone_msg = time.perf_counter()
+            if (m.get("right") or {}).get("pose"):
+                self.phone_seen = time.perf_counter()
+            n["in"] += 1
+            if n["in"] in (1, 100) or n["in"] % 1000 == 0:
+                c = m.get("right") or {}
+                print(f"[input] {who}: {n['in']} messages; MOVE {c.get('grip')} GRAB {c.get('stick')} "
+                      f"{'menu' if self.game is None else self.game.state}", flush=True)
+        elif t == "view":
+            self.view_yaw = float(m.get("yaw", 0.0))
+            if self.game is not None:
+                self.game.view_yaw = self.view_yaw
+        elif t == "fps":                             # the game screen's frame rate, for the log
+            n["fps"] += 1
+            if n["fps"] % 6 == 1:
+                print(f"[fps] {who}: {m.get('fps')} fps, quality {m.get('quality')}, {m.get('gpu', '')}", flush=True)
+        elif t == "ping":
+            await ws.send_str(json.dumps({"type": "pong", "t": m.get("t")}))
+        elif t == "restart":
+            self.new_game()
+        elif t == "select":
+            self.new_game(str(m.get("game")))
+        elif t == "menu":
+            self.to_menu()
 
     def phone_url(self) -> str | None:
         try:
