@@ -42,8 +42,10 @@
       text-shadow: 0 6px 30px rgba(0,0,0,.7); opacity: 0; transition: opacity .35s, transform .35s; pointer-events: none; text-align: center; }
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(-8px); }
     #pair { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(80% 70% at 50% 40%, rgba(10,14,22,.55), rgba(5,6,9,.85)); }
-    #pair .card { display: grid; grid-template-columns: 220px 1fr; gap: 26px; padding: 28px 30px; max-width: 720px; align-items: center; }
-    #pair img { width: 220px; height: 220px; background: #fff; border-radius: 14px; padding: 8px; box-sizing: border-box; }
+    #pair .card { padding: 26px 30px; max-width: 640px; }
+    #pair .qrs { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+    #pair img { width: 100%; max-width: 230px; aspect-ratio: 1; background: #fff; border-radius: 14px; padding: 8px; box-sizing: border-box; display: block; margin: 0 auto; }
+    #pair .qlab { text-align: center; font-weight: 900; font-size: 18px; margin-top: 8px; }
     #pair h2 { margin: 0 0 6px; font-size: 26px; font-weight: 900; }
     #pair ol { margin: 10px 0 0; padding-left: 20px; color: #cfd6e1; } #pair li { margin: 6px 0; }
     #pair .url { margin-top: 12px; font-size: 12px; color: var(--dim); word-break: break-all; }
@@ -112,16 +114,15 @@
     <div class="hint" id="menuHint"></div>
   </div></div>
   <div id="pair" class="hidden"><div class="glass card">
-    <img id="qr" alt="QR code for the phone controller">
     <div>
       <div class="lab" style="color:var(--accent)">Step 1</div>
       <h2>Connect your phone</h2>
-      <ol>
-        <li>Scan this code with your <b>Android phone</b> and open it in <b>Chrome</b>.</li>
-        <li>Tap <b>START CONTROLLER</b> and allow the camera.</li>
-        <li>Hold the phone upright, pointed at this screen, then <b>hold the blue pad</b> to move the robot.</li>
-      </ol>
-      <div class="url" id="phoneUrl"></div>
+      <p style="color:#cfd6e1;margin:4px 0 14px">Scan the code for your phone with its camera, open the link, and tap
+        <b>PLAY WITH TOUCH CONTROLS</b>. The left stick moves the robot, the right stick moves it up and down.</p>
+      <div class="qrs">
+        <div><img id="qrA" alt="QR code: Android"><div class="qlab">Android</div><div class="url" id="urlA"></div></div>
+        <div><img id="qrI" alt="QR code: iPhone"><div class="qlab">iPhone</div><div class="url" id="urlI"></div></div>
+      </div>
     </div>
   </div></div>
   <div id="done" class="hidden"><div class="glass card">

@@ -20,13 +20,19 @@ python -m buzzwire.server            # then open http://localhost:8000 and choos
 python -m buzzwire.server --game tower   # (start straight in one game)
 ```
 
-The screen shows a QR code: scan it with an **Android phone** (Chrome) and tap START CONTROLLER.
-The phone needs the public tunnel (`python -m TEST_TELEOP.lobby tunnel`). The phone is the only
-controller:
+The screen shows two QR codes, one per kind of phone (they need the public tunnel:
+`python -m TEST_TELEOP.lobby tunnel`):
 
-- **Hold the blue pad** and move the phone: the robot follows (like a VR controller).
-- **GRAB / RELEASE** close and open the gripper. **RE-CENTER**: "forward" = where you point now.
-- The phone buzzes when the wand touches the wire, and on grab, release and level done.
+| Link | Phone | Page | Controls |
+|---|---|---|---|
+| `/phone` | Android (Chrome) | `web/phone.html`, `phone.js` | **touch joysticks** (default), or motion control (the phone's camera tracks it, WebXR AR) |
+| `/iphone` | iPhone / iPad (Safari) | `web/apple/index.html`, `iphone.js` | **touch joysticks** (default), or **tilt steering** (hold the left pad and tilt the phone; the gyroscope, Safari asks to allow motion) |
+
+Joysticks: the **left stick** moves the gripper (forward = into the screen), the **right stick**
+moves it up / down and turns it; **TILT** (levels with full rotation) makes the right stick tilt
+and twist. Full deflection = 12 cm/s, gentle pushes move slowly. **GRAB / RELEASE** close and
+open the gripper. Feedback: Android vibrates, the iPhone beeps (Safari can't vibrate); both flash
+red on a touch of the wire. If motion tracking is lost (Android), both screens say so.
 
 **Graphics:** physically based materials lit by an HDRI studio (reflections), a soft key light,
 MSAA. Presets: **standard** (default, light enough for laptop graphics), **low** (chosen by
@@ -85,5 +91,6 @@ buzzwire/
   tower.py     Tower: blocks one at a time, height, falls
   bot.py       plays every game through the controller messages (Buzz Wire: clean and clumsy)
   server.py    development server: the game in real time, the web pages
-  web/         index.html + app.js: the game screen (three.js); phone.html + phone.js: the controller
+  web/         index.html + app.js: the game screen (three.js); phone.html + phone.js: the Android controller
+  web/apple/   index.html + iphone.js: the iPhone controller
 ```

@@ -368,7 +368,7 @@ function showMenu(s) {
     document.querySelectorAll('.gcard').forEach(c => c.onclick = () => { send({ type: 'select', game: c.dataset.k }); ensureAudio(); });
     menuBuilt = true;
   }
-  $('menuHint').textContent = s.phone ? 'Your phone is connected.' : 'Then scan the QR code with your Android phone to control the robot.';
+  $('menuHint').textContent = s.phone ? 'Your phone is connected.' : 'Then scan a QR code with your phone (Android or iPhone) to control the robot.';
 }
 function onStatus(s) {
   if (s.type !== 'status') return;
@@ -421,8 +421,10 @@ function onStatus(s) {
   lastMsg = s.message;
 }
 fetch('/config.json').then(r => r.json()).then(c => {
-  if (c.phone_url) { $('qr').src = '/qr.svg'; $('phoneUrl').innerHTML = `or open <a href="${c.phone_url}">${c.phone_url}</a>`; }
-  else $('phoneUrl').textContent = 'No public address yet: start the tunnel for the phone.';
+  if (c.phone_url) {
+    $('qrA').src = '/qr.svg?for=android'; $('urlA').innerHTML = `<a href="${c.phone_url}">${c.phone_url}</a>`;
+    $('qrI').src = '/qr.svg?for=iphone'; $('urlI').innerHTML = `<a href="${c.iphone_url}">${c.iphone_url}</a>`;
+  } else $('urlA').textContent = 'No public address yet: start the tunnel for the phone.';
 });
 
 // ------------------------------------------------------------ sound and the buzz

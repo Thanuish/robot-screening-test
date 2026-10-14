@@ -4,7 +4,8 @@ in real time; browsers only show it and send controller input.
     python -m buzzwire.server [--port 8000] [--levels straight curves]
 
     /            the games: a menu (Buzz Wire, Cube Tasks, Tower), the 3D view, the HUD, the QR code
-    /phone       the phone controller (the only controller: hold to move, grab / release)
+    /phone       the Android phone controller (touch joysticks, or motion tracking)
+    /iphone      the iPhone controller (web/apple/: touch joysticks, or tilt steering)
     /scene.json  the current level's geometry (rebuilt per level)
     /ws          poses (binary, ~50 a second), status (JSON, 10 a second); input in
 
@@ -215,19 +216,22 @@ class Server:
                                                              "Content-Encoding": "gzip"})
 
         async def config(_):
-            return web.json_response(dict(self.cfg.public(), phone_url=self.phone_url()))
+            return web.json_response(dict(self.cfg.public(), phone_url=self.phone_url(),
+                                          iphone_url=self.phone_url("/iphone")))
 
-        async def qr(_):
+        async def qr(request):
             import segno
             buf = io.BytesIO()
-            segno.make(self.phone_url() or "no public address", error="m").save(buf, kind="svg", scale=6, border=2)
+            page = "/iphone" if request.query.get("for") == "iphone" else "/phone"
+            segno.make(self.phone_url(page) or "no public address", error="m").save(buf, kind="svg", scale=6, border=2)
             return web.Response(body=buf.getvalue(), content_type="image/svg+xml")
 
         async def ws_handler(request):
             ws = web.WebSocketResponse(heartbeat=15, max_msg_size=1 << 20)
             await ws.prepare(request)
             self.clients.add(ws)
-            who = "phone" if "Android" in request.headers.get("User-Agent", "") else "browser"
+            ua = request.headers.get("User-Agent", "")
+            who = "phone" if "Android" in ua else "iphone" if ("iPhone" in ua or "iPad" in ua) else "browser"
             print(f"[ws] {who} connected ({len(self.clients)} open)", flush=True)
             await ws.send_str(dumps(self.status()))
             self.counts[ws] = {"in": 0, "fps": 0}
@@ -251,6 +255,7 @@ class Server:
 
         app.router.add_get("/", index)
         app.router.add_get("/phone", phone)
+        app.router.add_get("/iphone", lambda _: web.FileResponse(WEB / "apple" / "index.html"))
         app.router.add_get("/scene.json", scene)
         app.router.add_get("/config.json", config)
         app.router.add_get("/level.json", level)
@@ -259,6 +264,7 @@ class Server:
         app.router.add_static("/static/", WEB)
         app.router.add_static("/vendor/", THREE)
         app.router.add_static("/assets/", WEB / "assets")
+        app.router.add_static("/apple/", WEB / "apple")          # the iPhone controller
 
         async def start(_):
             app["loop"] = asyncio.create_task(self.run())
@@ -300,9 +306,9 @@ class Server:
         elif t == "menu":
             self.to_menu()
 
-    def phone_url(self) -> str | None:
+    def phone_url(self, page: str = "/phone") -> str | None:
         try:
-            return json.loads(TUNNEL.read_text())["url"] + "/phone"
+            return json.loads(TUNNEL.read_text())["url"] + page
         except (FileNotFoundError, KeyError, json.JSONDecodeError):
             return None
 
