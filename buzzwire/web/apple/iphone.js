@@ -209,3 +209,8 @@ $('goTilt').addEventListener('click', async () => {
   try { await enableTilt(); begin('tilt'); }
   catch (e) { $('err').textContent = e.message; }
 });
+
+// a candidate's phone (/p/<code> -> /iphone?c=<code>): touch joysticks only, the same controls for everyone
+if (new URLSearchParams(location.search).get('c')) {
+  for (const el of [$('goTilt'), ...document.querySelectorAll('#intro .fine')]) el.classList.add('hidden');
+}

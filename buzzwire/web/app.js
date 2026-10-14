@@ -566,7 +566,7 @@ function candidateView(s) {
   }
   show('card', st === 'assessment' && !!s.card);
   if (s.card) {
-    $('cTitle').textContent = s.card_title || ''; $('cSub').textContent = (s.card_subtitle || '').replace(/^(Level|Task|Tower) \d+:\s*/, '');
+    $('cTitle').textContent = s.card_title || ''; const sub = (s.card_subtitle || '').replace(/^(Level|Task|Tower) \d+:\s*/, ''); $('cSub').textContent = sub.charAt(0).toUpperCase() + sub.slice(1);
     $('cText').textContent = s.card_text || '';
     $('cLimit').textContent = s.card_limit ? `Time: ${Math.round(s.card_limit / 60)} min. Starts by itself in:` : '';
     $('cCount').textContent = Math.ceil(s.card_left);

@@ -340,3 +340,10 @@ $('startTouch').addEventListener('click', () => {
     $('stRT').textContent = tiltOn ? 'TILT · TWIST' : 'UP / DOWN · TURN';
   });
 });
+
+// a candidate's phone (/p/<code> -> /phone?c=<code>): touch joysticks only, the same controls for
+// everyone (motion tracking differs between phones, so results wouldn't be comparable)
+if (new URLSearchParams(location.search).get('c')) {
+  for (const el of [$('start'), $('err'), ...document.querySelectorAll('#intro .fine')].filter(Boolean))
+    if (el.id !== 'startTouchFine') el.classList.add('hidden');
+}
