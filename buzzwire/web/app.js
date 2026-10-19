@@ -480,21 +480,36 @@ applyQuality();
 // ------------------------------------------------------------ smooth motion between packets
 // Each packet: the simulation time and every body's pose. Shown 30 ms late, interpolated between
 // the two packets around that moment (positions linearly, rotations by slerp).
-const DELAY = 0.03;
+// The robot is shown a little in the past, blended between the server's updates (~50 a second),
+// so it moves smoothly whatever the frame rate. Over the internet the updates arrive unevenly: the
+// delay adapts to cover how late 95 % of them come (last 3 s), between 30 and 150 ms, and changes
+// slowly (never seen as a jump). Too short a delay and the robot freezes and jumps on screen.
+const DELAY_MIN = 0.03, DELAY_MAX = 0.15;
+let delay = DELAY_MIN, lates = [], delayT = performance.now();
 let snaps = [], clockOff = null, lastSim = -1;
 function addSnap(f) {
   const t = f[0], n = f[2];
-  if (t < lastSim - 0.001) { snaps = []; clockOff = null; }     // a new level: the clock restarts
+  if (t < lastSim - 0.001) { snaps = []; clockOff = null; lates = []; }   // a new level: the clock restarts
   lastSim = t;
   const off = performance.now() / 1000 - t;                       // local clock - simulation clock
   clockOff = clockOff === null ? off : Math.min(off, clockOff + 0.002);   // lower envelope: the least-delayed packet
+  lates.push(off - clockOff);                                     // how late this one came
+  if (lates.length > 150) lates.shift();
   snaps.push({ t, n, f });
-  if (snaps.length > 12) snaps.shift();
+  if (snaps.length > 20) snaps.shift();
+}
+function updateDelay() {
+  const now = performance.now(), dt = Math.min(0.1, (now - delayT) / 1000); delayT = now;
+  if (lates.length < 20) return;
+  const sorted = [...lates].sort((x, y) => x - y);
+  const want = Math.min(DELAY_MAX, Math.max(DELAY_MIN, sorted[Math.floor(0.95 * (sorted.length - 1))] + 0.01));
+  delay = want > delay ? Math.min(want, delay + 0.2 * dt) : Math.max(want, delay - 0.03 * dt);
 }
 const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
 function applySnaps() {
   if (!snaps.length || !bodies.length) return;
-  const rt = performance.now() / 1000 - clockOff - DELAY;       // the simulation moment to show
+  updateDelay();
+  const rt = performance.now() / 1000 - clockOff - delay;       // the simulation moment to show
   let a = snaps[0], b = snaps[snaps.length - 1];
   for (let i = snaps.length - 1; i > 0; i--) {
     if (snaps[i - 1].t <= rt) { a = snaps[i - 1]; b = snaps[i]; break; }
@@ -685,12 +700,12 @@ renderer.setAnimationLoop((now) => {
   if (now - fpsT > 2000) {
     const fps = frames * 1000 / (now - fpsT);
     frames = 0; fpsT = now;
-    $('fps').textContent = `${Math.round(fps)} fps · ${quality}`;
+    $('fps').textContent = `${Math.round(fps)} fps · ${quality} · ${Math.round(delay * 1000)} ms`;
     if (!forced && sceneId >= 0) {
       slow = fps < 45 ? slow + 1 : 0;
       if (slow >= 2 && quality !== 'lite') { quality = { high: 'standard', standard: 'low', low: 'lite' }[quality]; slow = 0; applyQuality(); }
     }
-    if (now - reportT > 10000) { send({ type: 'fps', fps: Math.round(fps), quality, gpu }); reportT = now; }
+    if (now - reportT > 10000) { send({ type: 'fps', fps: Math.round(fps), quality, gpu, delay_ms: Math.round(delay * 1000) }); reportT = now; }
   }
 });
 

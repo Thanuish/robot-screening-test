@@ -499,7 +499,8 @@ class Server:
         elif t == "fps":                             # the game screen's frame rate, for the log
             n["fps"] += 1
             if n["fps"] % 6 == 1:
-                print(f"[fps] {who}: {m.get('fps')} fps, quality {m.get('quality')}, {m.get('gpu', '')}", flush=True)
+                print(f"[fps] {who}: {m.get('fps')} fps, quality {m.get('quality')}, display buffer {m.get('delay_ms')} ms, "
+                      f"{m.get('gpu', '')}", flush=True)
         elif t == "ping":
             await ws.send_str(json.dumps({"type": "pong", "t": m.get("t")}))
         elif t == "restart":
