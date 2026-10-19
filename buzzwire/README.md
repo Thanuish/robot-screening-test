@@ -164,6 +164,8 @@ python -m buzzwire.bot --replay                 # Buzz Wire: every level, 0 touc
 python -m buzzwire.bot --clumsy                 # wobbles past the ring's clearance: touches are counted
 python -m buzzwire.bot --game cubes --replay    # Cube Tasks: every task done
 python -m buzzwire.bot --game tower --replay    # Tower: stacks every block
+python -m buzzwire.stress                       # every game shoved around like an impatient person:
+                                                # no control tick may take over 50 ms
 ```
 
 ## Files
@@ -183,6 +185,7 @@ buzzwire/
   scene.py       the MuJoCo scenes: robot and room; the buzz-wire board, wire and wand
   spline.py      the wire's curve (arc length, closest point)
   ik.py          inverse kinematics on Pinocchio (joint limits and speeds, table keep-out on the real shapes)
+  stress.py      the stress check: fast swings, shoving into the table; times every tick
   jitter.py      the optional jitter buffer for the phone's messages
   bot.py         plays every game through the controller messages (checks)
   server.py      the server: the game in real time, the web pages, the candidate's test

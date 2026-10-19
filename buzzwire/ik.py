@@ -33,6 +33,7 @@ DAMP = 1e-4                    # damping on joint motion
 POSTURE = 1e-5                 # very weak pull toward the home posture (only settles the elbow)
 POSTURE_RATE = 0.05            # (a fraction of the way home per tick, as the posture's target)
 ITERS = 3                      # IK iterations per control tick
+MAX_ITER, MAX_ITER_IN = 200, 100   # the solver's iteration caps (it needs a few dozen)
 LIMIT_MARGIN = np.radians(3)
 ARM_LINKS = ("forearm_link", "wrist_1_link", "wrist_2_link", "wrist_3_link")   # keep arm_clearance
 NEAR = 0.15                    # [m] shapes farther than this from the table are not checked
@@ -80,7 +81,7 @@ class IK:
         self.z_min = TABLE_Z + self._pinch_floor(data, sc.ee_site)
         n = self.model.nv
         self.qp = proxsuite.proxqp.dense.QP(n, 0, len(self.shapes), True)   # box constraints on dq
-        self._init = False
+        self.failed = 0                 # solves that didn't finish (should stay 0)
 
     def _pinch_floor(self, data, ee_site) -> float:
         """How high above the table the pinch point is when the gripper's lowest part touches
@@ -131,7 +132,11 @@ class IK:
             nrm = nrm / ln if dist > 1e-6 and ln > 1e-9 else np.array([0.0, 0.0, 1.0])
             mujoco.mj_jac(m, md, self._jacp, None, pg, m.geom_bodyid[g])
             C[i] = nrm @ self._jacp[:, self.vadr]
-            lo[i] = clear - dist
+            # a shape already closer than its clearance (the physics pushed it, e.g. pressed onto a
+            # cube) may not go deeper; the target then lifts it out. So "don't move" always meets
+            # every constraint: the problem always has a solution (with "get back out within this
+            # tick" it may have none, and the solver would search for seconds)
+            lo[i] = min(clear - dist, 0.0)
         return C, lo
 
     def step(self, q, target_pos, target_quat, dt):
@@ -143,7 +148,7 @@ class IK:
         W = np.diag([1, 1, 1, ROT_W ** 2, ROT_W ** 2, ROT_W ** 2])
         Rb = self.base.rotation
         step = self.qd_max * dt
-        q0 = np.asarray(q, float)
+        q0 = np.clip(np.asarray(q, float), self.lo, self.hi)
         q = q0.copy()
         for _ in range(ITERS):
             pin.computeJointJacobians(model, data, q)
@@ -163,16 +168,20 @@ class IK:
             u_box = np.minimum(self.hi - q, step - used)
             l_box = np.minimum(l_box, u_box)
             hi = np.full(len(lo), 1e9)
-            if not self._init:
-                self.qp.settings.eps_abs = 1e-7
-                self.qp.settings.verbose = False
-                self.qp.init(H, g, None, None, C, lo, hi, l_box, u_box)
-                self._init = True
-            else:
-                self.qp.update(H, g, None, None, C, lo, hi, l_box, u_box)
+            # a fresh solve every time (~0.05 ms for 6 joints): warm-starting from the previous
+            # answer let one bad solve spoil the next ones (they then ran to the iteration cap)
+            self.qp = proxsuite.proxqp.dense.QP(len(q), 0, len(lo), True)
+            self.qp.settings.eps_abs = 1e-7
+            self.qp.settings.verbose = False
+            # a hard cap: it takes ~10 iterations; never let one control tick run long (the
+            # default allows 10,000 x 1,500: seconds to minutes)
+            self.qp.settings.max_iter = MAX_ITER
+            self.qp.settings.max_iter_in = MAX_ITER_IN
+            self.qp.init(H, g, None, None, C, lo, hi, l_box, u_box)
             self.qp.solve()
             dq = self.qp.results.x
-            if not np.all(np.isfinite(dq)):
+            if self.qp.results.info.status != proxsuite.proxqp.PROXQP_SOLVED or not np.all(np.isfinite(dq)):
+                self.failed += 1                               # (counted; the arm holds for the rest of this tick)
                 break
-            q = q + dq
+            q = np.clip(q + dq, self.lo, self.hi)            # (exactly within the limits: the next box holds 0)
         return q
