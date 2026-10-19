@@ -67,13 +67,53 @@ def _plain(o):
 def dumps(obj) -> str:
     return json.dumps(obj, default=_plain)
 STATUS_EVERY = 10
+SLOW_TICK = 0.03               # [s] a control tick that takes longer than this is logged
+
+
+class Client:
+    """One open connection and its own sender task. The simulation only drops the newest pose
+    packet and status into its two slots (never waits); the sender sends whatever is newest. A
+    slow reader (a background tab, a bad network) just misses frames: it can never hold up the
+    simulation or the other connections."""
+
+    def __init__(self, ws: web.WebSocketResponse, who: str):
+        self.ws, self.who = ws, who
+        self.poses = who == "browser"        # (the phones don't use the robot's poses: not sent)
+        self.hidden = False                  # the page says it's hidden (a background tab): no poses
+        self.pose: bytes | None = None
+        self.text: str | None = None
+        self.ready = asyncio.Event()
+        self.task = asyncio.create_task(self._send())
+
+    def offer(self, msg):
+        if isinstance(msg, bytes):
+            if not self.poses or self.hidden:
+                return
+            self.pose = msg
+        else:
+            self.text = msg
+        self.ready.set()
+
+    async def _send(self):
+        try:
+            while not self.ws.closed:
+                await self.ready.wait()
+                self.ready.clear()
+                text, self.text = self.text, None
+                pose, self.pose = self.pose, None
+                if text is not None:
+                    await self.ws.send_str(text)
+                if pose is not None:
+                    await self.ws.send_bytes(pose)
+        except (ConnectionResetError, RuntimeError, asyncio.CancelledError):
+            pass
 
 
 class Server:
     def __init__(self, args):
         self.args = args
         self.cfg = C.load()
-        self.clients: set[web.WebSocketResponse] = set()
+        self.clients: dict[web.WebSocketResponse, Client] = {}   # every open connection, with its sender
         self.counts: dict = {}                # per connection: messages seen (for the log)
         self.phone_seen = 0.0                 # when the phone last sent its pose
         self.phone_msg = 0.0                  # when the phone last sent anything (with or without a pose)
@@ -159,10 +199,15 @@ class Server:
         while True:
             g = self.game
             if g is None:                             # the menu, or a candidate between tasks: only the status
-                await self.broadcast(dumps(self.status()))
+                self.broadcast(dumps(self.status()))
                 await asyncio.sleep(0.1)
                 t0, tick0, rtf_t, rtf_w = time.perf_counter(), 0, 0, time.perf_counter()
                 continue
+            # let the network in every tick, also when behind (otherwise the phone's messages wait
+            # until the loop has caught up, and the "no messages" rule below fires on a phone that
+            # was sending all along)
+            await asyncio.sleep(0)
+            work0 = time.perf_counter()
             if (id(g), g.li, id(g.sc)) != self._level:
                 self._export()                        # a new level or game: new geometry for the browsers
             # no controller message for input_timeout_s (the phone froze, the network stalled): MOVE
@@ -188,19 +233,23 @@ class Server:
             else:
                 g.step()
             tick0 += 1
+            work = time.perf_counter() - work0
+            if work > SLOW_TICK:
+                print(f"[loop] a slow tick: {work * 1000:.0f} ms", flush=True)
             if tick0 % POSE_EVERY == 0:
-                await self.broadcast(self.pose_packet())
+                self.broadcast(self.pose_packet())
             if tick0 % STATUS_EVERY == 0:
                 now = time.perf_counter()
                 if now - rtf_w > 1.0:
                     self.rtf = (tick0 - rtf_t) * dt / (now - rtf_w)
                     rtf_w, rtf_t = now, tick0
-                await self.broadcast(dumps(self.status()))
+                self.broadcast(dumps(self.status()))
             # keep to real time (if behind, catch up without sleeping)
             wait = t0 + tick0 * dt - time.perf_counter()
             if wait > 0:
                 await asyncio.sleep(wait)
             elif wait < -0.25:
+                print(f"[loop] {-wait * 1000:.0f} ms behind real time: resync", flush=True)
                 t0, tick0 = time.perf_counter(), 0   # (far behind, e.g. after a level build: resync)
                 rtf_t = 0
                 rtf_w = time.perf_counter()
@@ -243,18 +292,10 @@ class Server:
             return dict(kind="none", scene_id=self.scene_id, table_z=C.TABLE_Z)
         return dict(self.game.level_geometry(), scene_id=self.scene_id, table_z=C.TABLE_Z)
 
-    async def broadcast(self, msg):
-        dead = []
-        for ws in self.clients:
-            try:
-                if isinstance(msg, bytes):
-                    await ws.send_bytes(msg)
-                else:
-                    await ws.send_str(msg)
-            except (ConnectionResetError, RuntimeError):
-                dead.append(ws)
-        for ws in dead:
-            self.clients.discard(ws)
+    def broadcast(self, msg):
+        """Offer a message to every connection (never waits: each has its own sender)."""
+        for c in list(self.clients.values()):
+            c.offer(msg)
 
     # ---------------------------------------------------------------- web
     def app(self) -> web.Application:
@@ -296,11 +337,11 @@ class Server:
         async def ws_handler(request):
             ws = web.WebSocketResponse(heartbeat=15, max_msg_size=1 << 20)
             await ws.prepare(request)
-            self.clients.add(ws)
             ua = request.headers.get("User-Agent", "")
             who = "phone" if "Android" in ua else "iphone" if ("iPhone" in ua or "iPad" in ua) else "browser"
+            self.clients[ws] = Client(ws, who)
             print(f"[ws] {who} connected ({len(self.clients)} open)", flush=True)
-            await ws.send_str(dumps(self.status()))
+            self.clients[ws].offer(dumps(self.status()))
             self.counts[ws] = {"in": 0, "fps": 0}
             try:
                 async for msg in ws:
@@ -315,7 +356,9 @@ class Server:
                     except Exception:                    # one bad message must not drop the connection
                         print(f"[error] message {str(m)[:120]}:\n{traceback.format_exc()}", flush=True)
             finally:
-                self.clients.discard(ws)
+                c = self.clients.pop(ws, None)
+                if c is not None:
+                    c.task.cancel()
                 self.counts.pop(ws, None)
                 print(f"[ws] {who} disconnected", flush=True)
             return ws
@@ -450,6 +493,9 @@ class Server:
             self.view_yaw = float(m.get("yaw", 0.0))
             if self.game is not None:
                 self.game.view_yaw = self.view_yaw
+        elif t == "visible":                         # the game screen is shown / hidden (a background tab)
+            if ws in self.clients:
+                self.clients[ws].hidden = not m.get("on", True)
         elif t == "fps":                             # the game screen's frame rate, for the log
             n["fps"] += 1
             if n["fps"] % 6 == 1:

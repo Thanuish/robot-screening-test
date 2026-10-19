@@ -437,7 +437,11 @@ let ws, status = {};
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   ws.binaryType = 'arraybuffer';
-  ws.onopen = () => { sentYaw = null; if (CAND) ws.send(JSON.stringify({ type: 'join', code: CAND })); };   // (a new connection: send the view's heading again)
+  ws.onopen = () => {
+    sentYaw = null;                                   // (a new connection: send the view's heading again)
+    ws.send(JSON.stringify({ type: 'visible', on: !document.hidden }));
+    if (CAND) ws.send(JSON.stringify({ type: 'join', code: CAND }));
+  };
   ws.onclose = () => setTimeout(connect, 1000);
   ws.onmessage = (ev) => {
     if (typeof ev.data === 'string') {
@@ -453,6 +457,8 @@ function connect() {
   };
 }
 connect();
+// a hidden page (a background tab) gets no robot poses: they would only pile up on its connection
+document.addEventListener('visibilitychange', () => send({ type: 'visible', on: !document.hidden }));
 const send = (m) => { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(m)); return true; } return false; };
 $('restart').onclick = () => { send({ type: 'restart' }); $('restart').blur(); };
 $('toMenu').onclick = () => { send({ type: 'menu' }); $('toMenu').blur(); };
