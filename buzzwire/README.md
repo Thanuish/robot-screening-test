@@ -61,23 +61,33 @@ python -m TEST_TELEOP.lobby tunnel      # the public https address the phones an
 
 **View** (as in the screening test, `[view]`): from the robot's "head", just behind its base,
 looking down at the work area. Drag to turn the view; double-click to reset it. "Forward" on the
-phone is always into the screen, also after the view is turned. The shoulder, upper arm and
-forearm are drawn see-through (`arm_opacity` 0.25) so they don't hide the work area.
+phone is always into the screen, also after the view is turned.
+
+**The arm is solid.** Shading and occlusion are strong depth cues. Its big links (base,
+shoulder, upper arm, forearm) fade to `arm_opacity` (0.25) only while they hide something. Every
+frame, rays from the camera to the gripper, to the spot below it and to the table 8 cm around
+that spot are tested against each link's box. A link becomes solid again, smoothly, once it no
+longer hides anything.
 
 **Side view** (`[side_view]`): a small second view in the top-right corner, under the top bar.
 It shows the gripper from the robot's left at table height and follows it smoothly. Whatever is
-between that camera and the gripper (the arm, a post) is cut away.
+between that camera and the gripper (the arm, a post) is cut away. A centimetre scale on its
+left edge marks the finger pads' height ("14.1 cm", green when low enough to grab). It's exact at
+the gripper's distance, because the side camera looks level from a fixed distance.
 
 **Depth cues** make height and distance readable on a flat screen:
 - **A ring, a dot and a line** from the point between the finger pads down to the table, green
   when they are low enough to grab (`[depth_cues]`, as in the screening test).
-- **Shadows** fall straight down from a light above the table, on every quality setting.
+- **Shadows** fall straight down from a light above the table, on every quality setting. They're
+  sharp-edged and dark, with little flat fill light.
 - **A faint 10 cm grid** on the table: its lines shrink with distance.
 
 **Graphics:** physically based materials and HDRI lighting. Presets: **lite** (the default:
 small shadows, no effects), **low**, **standard**, **high** (`?q=...`). It steps down by itself
-below 45 fps. The
-robot's positions are interpolated, so motion is smooth at any frame rate. Assets:
+below 45 fps. The robot is shown slightly in the past, blended between the server's ~50 updates
+a second, so it moves smoothly at any frame rate. That delay adapts to the connection: it covers
+how late 95 % of the updates arrive (30-150 ms). The corner shows frame rate, quality and this
+delay. Assets:
 `web/assets/CREDITS.md` (CC0), three.js r170 in `web/vendor/` (MIT).
 
 **From the phone to the robot**, the same chain and numbers as the screening test
@@ -93,11 +103,21 @@ robot's positions are interpolated, so motion is smooth at any frame rate. Asset
    tick, sharing that tick's joint-speed budget. The forearm and wrist keep 2 cm above the
    table, every part of the gripper 3 mm (`arm_clearance`, `finger_clearance`). These distances
    are measured on the real collision shapes, so the fingers can reach down to grab.
-5. **The motors** follow at the UR5e's own stiffness (`servo_stiffness` 1).
+5. **The motors** follow at the UR5e's own stiffness (`servo_stiffness` 1). They also get the
+   commanded velocity, as a real robot's servo controller does (`servo_feedforward`). Without
+   it, a joint motor trails its command by kv/kp (0.1 s).
 
-Measured with phone-like input (30 poses a second, 1.5 mm noise): the gripper is about 0.22 s
-behind the hand at both 2 cm/s and 20 cm/s, wobbles 0.6 mm when the hand is still, and is within
-0.6 degrees of a 90-degree tip half a second after it.
+Measured with phone-like input (30 poses a second, 1.5 mm noise): the gripper is about 0.12 s
+behind the hand at both 2 cm/s and 20 cm/s, and wobbles 0.8 mm when the hand is still (about a
+pixel). It's within 0.15 degrees of a 90-degree tip half a second after it. Without the
+feed-forward (the screening test's chain): 0.22 s, 0.6 mm, 0.6 degrees.
+
+**No stalls.** Each open page has its own sender that always sends the newest frame. A slow
+page (a background tab, a bad network) only misses frames, and can't hold up the simulation or
+anyone else. The loop reads the network every tick. Phones and hidden pages get no robot poses
+(phones don't use them). A level change takes about 50-80 ms, and the games are built once when
+the server starts. The log notes slow ticks (`[loop]`), the longest gap between the phone's
+messages, and each page's frame rate and display delay.
 
 **Losing the phone:**
 - **No messages.** No controller message for 0.35 s (`input_timeout_s`) counts as MOVE
