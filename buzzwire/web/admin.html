@@ -8,7 +8,7 @@
     :root { --bg: #0b0d12; --panel: #151922; --line: #262c38; --text: #e9edf3; --dim: #8d95a3; --accent: #36c2ff; --go: #2fdc7f; --warn: #ffb02e; }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-    .wrap { max-width: 1240px; margin: 0 auto; padding: 24px 20px 60px; }
+    .wrap { max-width: 1480px; margin: 0 auto; padding: 24px 20px 60px; }
     h1 { font-size: 24px; margin: 0 0 4px; } .sub { color: var(--dim); margin-bottom: 20px; }
     .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; margin-bottom: 18px; }
     .panel h2 { font-size: 15px; margin: 0 0 12px; letter-spacing: .02em; }
@@ -17,6 +17,7 @@
     input, select { font: inherit; color: var(--text); background: #0f131a; border: 1px solid #39404f; border-radius: 8px; padding: 9px 11px; min-width: 160px; }
     button { font: 700 13px system-ui; color: #fff; background: linear-gradient(135deg, #36c2ff, #7b5cff); border: 0; border-radius: 8px; padding: 10px 16px; cursor: pointer; }
     button.small { padding: 5px 10px; font-size: 12px; background: #262c38; }
+    button.small.go { background: linear-gradient(135deg, #36c2ff, #7b5cff); }
     #made { margin-top: 12px; color: #cfe; white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; }
@@ -97,7 +98,7 @@ async function load() {
   // don't rebuild while a control dropdown is being used
   if (document.activeElement && document.activeElement.classList.contains('ctl')) return;
   $('rows').innerHTML = rows.map(r => `<tr>
-    <td>${esc(r.name)}<div class="dim">${esc(r.email)}</div></td>
+    <td>${esc(r.name)}<div class="dim">${esc(r.email)}</div><button class="small go" data-detail="${r.code}" style="margin-top:6px">Details</button></td>
     <td class="num">${r.code}</td>
     <td><select class="ctl" data-code="${r.code}">${Object.entries(data.controls).map(([k, v]) =>
       `<option value="${k}" ${k === r.controls ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></td>
@@ -108,7 +109,7 @@ async function load() {
     <td class="num">${r.practice_rounds || ''}</td>
     <td>${esc(r.device || '')}${r.controls_used ? ` / ${esc(r.controls_used)}` : ''}${r.controls_used && r.controls !== 'choice' && r.controls_used !== r.controls && !(r.controls === 'motion' && r.controls_used === 'tilt') ? ' <span class="warn" title="used other controls than assigned (e.g. the phone could not track motion)">⚠</span>' : ''}</td>
     <td class="dim">${esc(r.started || r.created || '')}</td>
-    <td><button class="small" data-detail="${r.code}">Details</button> <button class="small" data-link="${esc(r.link)}">Copy link</button></td>
+    <td><button class="small" data-link="${esc(r.link)}">Copy link</button></td>
   </tr>`).join('');
   document.querySelectorAll('button[data-detail]').forEach(b => b.onclick = () => showDetail(b.dataset.detail, 0));
   document.querySelectorAll('#rows tr').forEach(tr => tr.classList.toggle('sel', !!detail && tr.querySelector(`[data-detail="${detail.code}"]`) !== null));
