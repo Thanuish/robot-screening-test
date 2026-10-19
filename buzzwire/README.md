@@ -59,14 +59,20 @@ python -m TEST_TELEOP.lobby tunnel      # the public https address the phones an
 | `/phone` | Android controller: touch joysticks, or motion control (the camera tracks the phone) |
 | `/iphone` | iPhone controller (`web/apple/`): touch joysticks, or tilt steering (the gyroscope) |
 
-**View:** from just behind the robot, over its right shoulder, at head height, close and wide
-(`[view]`). Drag to turn the view; double-click to reset it. The shoulder, upper arm and forearm
-are drawn see-through (`arm_opacity`) so they don't hide the work area.
+**View** (as in the screening test, `[view]`): from the robot's "head", just behind its base,
+looking down at the work area. Drag to turn the view; double-click to reset it. "Forward" on the
+phone is always into the screen, also after the view is turned. The shoulder, upper arm and
+forearm are drawn see-through (`arm_opacity` 0.25) so they don't hide the work area.
+
+**Side view** (`[side_view]`): a small second view in the top-right corner, under the top bar.
+It shows the gripper from the robot's left at table height and follows it smoothly. Whatever is
+between that camera and the gripper (the arm, a post) is cut away.
 
 **Depth cues** make height and distance readable on a flat screen:
+- **A ring, a dot and a line** from the point between the finger pads down to the table, green
+  when they are low enough to grab (`[depth_cues]`, as in the screening test).
 - **Shadows** fall straight down from a light above the table, on every quality setting.
-- **A faint 5 cm grid** on the table: its lines shrink with distance.
-- **A ring and a line** from the fingertips down to the table: green when low enough to grab.
+- **A faint 10 cm grid** on the table: its lines shrink with distance.
 
 **Graphics:** physically based materials and HDRI lighting. Presets: **lite** (the default:
 small shadows, no effects), **low**, **standard**, **high** (`?q=...`). It steps down by itself
@@ -74,26 +80,48 @@ below 45 fps. The
 robot's positions are interpolated, so motion is smooth at any frame rate. Assets:
 `web/assets/CREDITS.md` (CC0), three.js r170 in `web/vendor/` (MIT).
 
-**Smooth motion** (`[controls]`):
-- **Even playback.** Through the internet the phone's messages arrive unevenly (bursts, then
-  gaps). The server keeps them with the phone's timestamps and plays them back evenly, a little
-  later. The delay adapts to the connection: about 30 ms on a good one, at most 150 ms
-  (`jitter_buffer_s`, `jitter_buffer_max_s`; `buzzwire/jitter.py`).
-- **Adaptive smoothing.** A One Euro filter is strong while the hand is still (no shake) and
-  weak while it moves fast (little lag).
-- **Speed limits** on the robot: top speed 0.6 m/s (`[robot]`).
+**From the phone to the robot**, the same chain and numbers as the screening test
+(`vrteleop/`), so it feels as predictable. Each control tick (100 a second):
+1. **Clutch.** While MOVE is held, the gripper's target moves and turns like the phone, relative
+   to where both were when MOVE was pressed.
+2. **Smoothing.** The target moves a fixed share of the way toward the phone each tick: a
+   low-pass with a 0.12 s time constant (`[controls] filter = "simple"`, `smoothing_s`). The
+   delay is the same at every hand speed. The adaptive One Euro filter is still there to try
+   (`filter = "one_euro"`).
+3. **Speed caps** after the smoothing: at most 0.4 m/s and 90 degrees a second (`[robot]`).
+4. **Inverse kinematics** (`ik.py`): rotation counts as much as position. Three iterations per
+   tick, sharing that tick's joint-speed budget. The forearm and wrist keep 2 cm above the
+   table, every part of the gripper 3 mm (`arm_clearance`, `finger_clearance`). These distances
+   are measured on the real collision shapes, so the fingers can reach down to grab.
+5. **The motors** follow at the UR5e's own stiffness (`servo_stiffness` 1).
+
+Measured with phone-like input (30 poses a second, 1.5 mm noise): the gripper is about 0.22 s
+behind the hand at both 2 cm/s and 20 cm/s, wobbles 0.6 mm when the hand is still, and is within
+0.6 degrees of a 90-degree tip half a second after it.
+
+**Losing the phone:**
+- **No messages.** No controller message for 0.35 s (`input_timeout_s`) counts as MOVE
+  released, and the arm holds still. When messages come back the clutch takes a new anchor, so
+  the arm doesn't jump to wherever the phone is now.
 - **Tracking loss.** If the phone's camera tracking drops out (a very fast move, a blank view),
-  the robot glides to a stop and waits. When tracking returns it carries on from where it is,
-  without a jump.
+  MOVE is released as well. If the tracking relocates itself (its position jumps), the clutch
+  re-anchors too.
 - **Slow networks.** The phone skips messages while the network is behind, instead of piling up
   delay.
+- **Jitter buffer.** An optional buffer evens out messages that arrive in bursts
+  (`jitter_buffer_s`, `jitter_buffer_max_s`; `jitter.py`). It's off by default, as in the
+  screening test.
+
+**Vibration:** one short pulse (25 ms) on GRAB / RELEASE and when a wire touch starts, nothing
+else. Vibration shakes the sensors the phone's tracking uses. Everything else is shown on the
+phone's screen, which has no animations while tracking.
 
 ## Buzz Wire: how a level goes
 
 1. The robot already holds the wand (fixed in its hand: it can't slip out); its ring is around
    the wire at the start (the red sleeve).
 2. Steer with the phone: slide the ring along the wire without touching it.
-   Touching buzzes (red flash, sound, the phone vibrates) and is counted.
+   A touch is counted and shown: a red flash, a sound, one short pulse on the phone.
 3. When the ring reaches the red sleeve at the far end, the level is done.
 
 **The guide** (a "virtual fixture", common in teleoperation): the arm's target is limited so the
@@ -121,7 +149,7 @@ python -m buzzwire.bot --game tower --replay    # Tower: stacks every block
 ## Files
 
 ```
-config/buzzwire.toml   robot, controls, physics, view; Buzz Wire (board, wire, wand, scoring, levels);
+config/buzzwire.toml   robot, controls, physics, view, side view, depth cues; Buzz Wire (board, wire, wand, scoring, levels);
                        [cubes] (which tasks of config/screening.toml); [tower]; [flow] (the candidate's test)
 buzzwire/
   config.py      reads and checks the configuration
@@ -134,7 +162,8 @@ buzzwire/
   tower.py       Tower: blocks one at a time, height, falls
   scene.py       the MuJoCo scenes: robot and room; the buzz-wire board, wire and wand
   spline.py      the wire's curve (arc length, closest point)
-  ik.py          inverse kinematics on Pinocchio (joint limits and speeds, table keep-out)
+  ik.py          inverse kinematics on Pinocchio (joint limits and speeds, table keep-out on the real shapes)
+  jitter.py      the optional jitter buffer for the phone's messages
   bot.py         plays every game through the controller messages (checks)
   server.py      the server: the game in real time, the web pages, the candidate's test
   web/           index.html + app.js: the screen; phone.html + phone.js: the Android controller
