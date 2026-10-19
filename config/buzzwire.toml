@@ -44,11 +44,12 @@ min_cutoff_hz = 0.3            # (one_euro) how strongly a still hand is smoothe
 beta = 10.0                    # (one_euro) how fast the smoothing lets go as the hand speeds up [per m/s]
 rot_beta = 2.0                 # (one_euro) the same for turning [per rad/s]
 glide_s = 0.025                # (one_euro) glide between phone samples [s]
-# Through the internet the phone's messages arrive unevenly (a few at once, then a gap): played
-# back as they come, the robot stutters. They are kept with the phone's own timestamps and played
-# back evenly a little later: just enough to cover how uneven the connection is (measured all the
-# time), between these two (0: off, as they arrive).
-jitter_buffer_s = 0.03
+input_timeout_s = 0.35         # no controller message for this long: MOVE counts as released (the arm
+                               # holds still); when messages come back the clutch re-anchors (no jump)
+# A jitter buffer (off, as in the screening test: the 0.12 s smoothing already evens the phone's
+# messages out): keep them with the phone's timestamps and play them back evenly, a little later,
+# just enough to cover how uneven the connection is, between these two. 0 = off.
+jitter_buffer_s = 0.0
 jitter_buffer_max_s = 0.15
 
 # ---------------------------------------------------------------------------- physics

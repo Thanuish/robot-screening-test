@@ -85,6 +85,8 @@ class Server:
         self.view_yaw = 0.0
         self.controls = "touch"               # what the phone says it uses: motion, tilt, touch
         self.jitter = Jitter(self.cfg.controls["jitter_buffer"], self.cfg.controls["jitter_buffer_max"])   # the phone's messages, played back evenly
+        self.input_t = None                   # when the last controller message came
+        self.stale = False                    # none for input_timeout_s: MOVE counts as released
         self.kind = None
         if args.game:
             self.new_game(args.game)
@@ -163,7 +165,16 @@ class Server:
                 continue
             if (id(g), g.li, id(g.sc)) != self._level:
                 self._export()                        # a new level or game: new geometry for the browsers
-            if self.jitter.msgs:
+            # no controller message for input_timeout_s (the phone froze, the network stalled): MOVE
+            # counts as released, the arm holds still; when messages come back the clutch takes a new
+            # anchor, so the arm doesn't jump to wherever the phone is now (as vrteleop/server.py)
+            if self.input_t is not None and time.perf_counter() - self.input_t > self.cfg.controls["input_timeout"]:
+                if not self.stale:
+                    self.stale = True
+                    self.jitter.reset()
+                    print("[input] no controller messages: MOVE released", flush=True)
+                g.set_input({})
+            elif self.jitter.msgs:
                 g.set_input({"right": self.jitter.sample()})
             if self.session is not None:
                 stage = self.session.stage
@@ -413,6 +424,7 @@ class Server:
         """One message from a browser or the phone."""
         t, n = m.get("type"), self.counts.setdefault(ws, {"in": 0, "fps": 0})
         if t == "input":
+            self.input_t, self.stale = time.perf_counter(), False
             if isinstance(m.get("t"), (int, float)) and self.jitter.delay > 0:
                 self.jitter.push(float(m["t"]), m.get("right"))     # (played back evenly by run())
             elif self.game is not None:              # (the menu: no robot to move)
