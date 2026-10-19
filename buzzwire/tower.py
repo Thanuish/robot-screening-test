@@ -50,7 +50,6 @@ class TowerGame(RobotGame):
 
     def __init__(self, cfg: Config, levels: list[str] | None = None, out_dir: Path | None = None, player: str = ""):
         self.tw = cfg.games["tower"]
-        self.table_clearance = self.tw["table_clearance"]
         lvls = [TowerLevel(**lv) for lv in self.tw["levels"] if levels is None or lv["key"] in levels]
         super().__init__(cfg, lvls, out_dir, player)
 

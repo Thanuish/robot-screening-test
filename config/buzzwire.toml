@@ -26,7 +26,8 @@ home_deg = [0.0, -100.0, 110.0, -100.0, -90.0, 0.0]
 max_speed = 0.4                # [m/s] top speed of the gripper, after the smoothing (as in the screening test)
 max_turn_deg = 90              # [deg/s] top turning speed of the gripper
 joint_speed_deg = 180          # [deg/s] top speed of each joint (a UR5e's limit)
-table_clearance = 0.03         # the wrist and gripper keep at least this far above the table [m]
+arm_clearance = 0.02           # the forearm and wrist keep at least this far above the table [m]
+finger_clearance = 0.003       # every part of the gripper at least this far (the fingers can reach down to grab)
 servo_stiffness = 1.0          # x the UR5e's joint motor stiffness (1 = the real one; 3 follows a little quicker but is twitchy)
 
 [controls]
@@ -156,7 +157,6 @@ points = [[0.0, -0.21, 0.13], [0.01, -0.11, 0.155], [-0.01, 0.0, 0.125], [0.01, 
 # =============================================================================================
 [cubes]
 phases = ["pick", "shapes", "sort"]    # practice: cube into the square; task 1: shapes; task 2: sorting
-table_clearance = 0.015                # the gripper may go this low above the table (cubes are 4-6 cm)
 
 # =============================================================================================
 #  Tower: stack blocks as high as you can. Blocks appear one at a time at the supply spot; take
@@ -169,7 +169,6 @@ platform_size = [0.14, 0.14, 0.02]     # [x, y, height]
 supply = [0.42, -0.18]                 # where the next block appears
 block_mass = 0.06                      # [kg] each block
 friction = [1.0, 0.01, 0.001]          # sliding, twisting, rolling (wood on wood)
-table_clearance = 0.015
 
 [[tower.levels]]
 key = "practice"

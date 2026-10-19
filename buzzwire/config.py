@@ -157,7 +157,7 @@ def parse(raw: dict, p="<config>") -> Config:
 
     r = raw.get("robot", {})
     c.keys(r, "robot", ("model", "gripper", "base", "home_deg", "max_speed", "max_turn_deg", "joint_speed_deg",
-                        "table_clearance", "servo_stiffness"))
+                        "arm_clearance", "finger_clearance", "servo_stiffness"))
     robot = dict(model=c.text(r, "model", "robot", "ur5e", tuple(ROBOTS)),
                  gripper=c.text(r, "gripper", "robot", "robotiq_2f85", GRIPPERS),
                  base=c.vec(r, "base", "robot", 2, [0.0, 0.0]),
@@ -165,7 +165,8 @@ def parse(raw: dict, p="<config>") -> Config:
                  max_speed=c.num(r, "max_speed", "robot", 0.3, lo=0.01, hi=3.0),
                  max_turn=math.radians(c.num(r, "max_turn_deg", "robot", 90, lo=1, hi=720)),
                  joint_speed=math.radians(c.num(r, "joint_speed_deg", "robot", 120, lo=1, hi=720)),
-                 table_clearance=c.num(r, "table_clearance", "robot", 0.03, lo=0.0, hi=0.3),
+                 arm_clearance=c.num(r, "arm_clearance", "robot", 0.02, lo=0.0, hi=0.3),
+                 finger_clearance=c.num(r, "finger_clearance", "robot", 0.003, lo=0.0, hi=0.3),
                  servo_stiffness=c.num(r, "servo_stiffness", "robot", 1.0, lo=0.2, hi=10.0))
     ct = raw.get("controls", {})
     c.keys(ct, "controls", ("motion_scale", "smoothing_s", "filter", "min_cutoff_hz", "beta", "rot_beta", "glide_s",
@@ -281,13 +282,13 @@ def parse(raw: dict, p="<config>") -> Config:
 
 
 def _cubes(c: _Checker, raw: dict) -> dict:
-    """[cubes]: which tasks of config/screening.toml, and how low the gripper may go."""
-    c.keys(raw, "cubes", ("phases", "table_clearance"))
+    """[cubes]: which tasks of config/screening.toml."""
+    c.keys(raw, "cubes", ("phases",))
     phases = raw.get("phases", ["pick", "shapes", "sort"])
     if not (isinstance(phases, list) and phases and all(isinstance(x, str) for x in phases)):
         c.err("cubes.phases", "should be a list of phase keys from config/screening.toml, e.g. [\"pick\", \"shapes\"]")
         phases = ["pick", "shapes", "sort"]
-    return dict(phases=phases, table_clearance=c.num(raw, "table_clearance", "cubes", 0.015, lo=0.0, hi=0.2))
+    return dict(phases=phases)
 
 
 def _color(c: _Checker, v, where):
@@ -329,10 +330,9 @@ def _flow(c: _Checker, raw: dict, wire_levels: list, games: dict) -> dict:
 
 def _tower(c: _Checker, raw: dict, robot: dict) -> dict:
     """[tower]: the stacking game: the platform, where blocks appear, the levels' blocks."""
-    c.keys(raw, "tower", ("table_clearance", "platform_center", "platform_size", "supply", "levels",
+    c.keys(raw, "tower", ("platform_center", "platform_size", "supply", "levels",
                           "block_mass", "friction"))
-    out = dict(table_clearance=c.num(raw, "table_clearance", "tower", 0.015, lo=0.0, hi=0.2),
-               platform_center=c.vec(raw, "platform_center", "tower", 2, [0.52, 0.06]),
+    out = dict(platform_center=c.vec(raw, "platform_center", "tower", 2, [0.52, 0.06]),
                platform_size=c.vec(raw, "platform_size", "tower", 3, [0.14, 0.14, 0.02], lo=0.005),
                supply=c.vec(raw, "supply", "tower", 2, [0.42, -0.18]),
                block_mass=c.num(raw, "block_mass", "tower", 0.06, lo=0.005, hi=1.0),

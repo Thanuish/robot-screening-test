@@ -177,7 +177,6 @@ def rms_jerk(P, dt) -> float | None:
 class RobotGame:
     KIND = "base"                   # the game's key (server, menu, results)
     TITLE = ""
-    table_clearance: float | None = None     # (a game may let the gripper lower than [robot] allows)
 
     def __init__(self, cfg: Config, levels: list, out_dir: Path | None = None, player: str = ""):
         self.cfg = cfg
@@ -248,10 +247,8 @@ class RobotGame:
         self.d.ctrl[self.sc.arm_act] = cfg.robot["home"]
         mujoco.mj_forward(self.m, self.d)
         self.ik = IK(self.sc, self.d)
-        clearance = self.table_clearance if self.table_clearance is not None else cfg.robot["table_clearance"]
-        self.ik.z_min = TABLE_Z + clearance
         self.q_cmd = np.array(cfg.robot["home"], float)
-        self.teleop = ArmTeleop(pos_scale=cfg.controls["motion_scale"], z_min=TABLE_Z + clearance)
+        self.teleop = ArmTeleop(pos_scale=cfg.controls["motion_scale"], z_min=self.ik.z_min)
         self.teleop.reset(*self.ik.fk(self.q_cmd))
         self.follow = Follower(cfg)
         self.tick = 0

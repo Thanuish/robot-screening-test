@@ -48,7 +48,6 @@ class CubesGame(RobotGame):
     def __init__(self, cfg: Config, levels: list[str] | None = None, out_dir: Path | None = None, player: str = ""):
         self.tc = SS.CFG                                  # the screening test's configuration
         gcfg = cfg.games["cubes"]
-        self.table_clearance = gcfg["table_clearance"]
         lvls = []
         for key in gcfg["phases"]:
             if levels is not None and key not in levels:
