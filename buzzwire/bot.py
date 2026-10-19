@@ -252,7 +252,7 @@ def play_cubes(bot: PickBot):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--game", default="wire", choices=("wire", "cubes", "tower"))
+    ap.add_argument("--game", default="wire", choices=("wire", "cubes", "tower", "rings"))
     ap.add_argument("--clumsy", action="store_true")
     ap.add_argument("--levels", nargs="*", default=None)
     ap.add_argument("--replay", action="store_true", help="replay the input log and compare the scores")
@@ -263,6 +263,8 @@ def main():
         cls = Game
     elif a.game == "cubes":
         from .cubes import CubesGame as cls
+    elif a.game == "rings":
+        from .rings import RingsGame as cls
     else:
         from .tower import TowerGame as cls
     g = cls(cfg, levels=a.levels, out_dir=out, player="bot")
@@ -277,6 +279,9 @@ def main():
             print(f"  {g.level.title}")
             if a.game == "cubes":
                 play_cubes(bot)
+            elif a.game == "rings":
+                from .rings import play_rings
+                play_rings(bot)
             else:
                 from .tower import play_tower
                 play_tower(bot)
@@ -287,7 +292,8 @@ def main():
                   f"({r['touch_time_s']:.2f}s)  progress {r['progress']:.2f}  drops {r['drops']}  robot hits {r['robot_hits']}  "
                   f"jerk {r['rms_jerk']}  score {r['score']}")
         else:
-            extra = {x: r[x] for x in ("steps_done", "steps_total", "height_cm", "best_height_cm", "placed", "falls") if x in r}
+            extra = {x: r[x] for x in ("steps_done", "steps_total", "height_cm", "best_height_cm", "placed", "falls", "rounds", "hung",
+                                                  "round_times") if x in r}
             print(f"  {k:9s} {'DONE' if r['completed'] else 'not done'}  time {r['time_s']:6.1f}s  grasps {r['grasps']}/{r['grasp_attempts']} "
                   f"drops {r['drops']} {extra}  score {r['score']}")
     print("  scores:", g.scores())

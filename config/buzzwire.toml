@@ -245,3 +245,84 @@ card_seconds = 8                                        # the task card before e
 default_controls = "motion"     # a new candidate's controls (the admin can change them per candidate):
                                 # "motion" (move the phone: Android tracking / iPhone tilt), "touch"
                                 # (two joysticks), "choice" (the candidate picks)
+
+# =============================================================================================
+#  Ring on pegs: three rings stand on their edge in small wooden holders in a row in front of the
+#  robot; straight ahead of each, further out, is a peg of the same colour on a grey post. The
+#  pegs lean at different angles, so each ring needs a different tilt of the hand. Take a ring by
+#  the top of its tube, lift it, tilt it so its hole lines up with the peg, slide it on from the
+#  tip, let go. When all three hang on their pegs (and nothing is held) the round counts, the
+#  rings jump back into their holders and the next round starts, until the time is up.
+#  Score 0..100: 80 x min(1, rings hung over all rounds / (3 x target_rounds))
+#              + 20 x grasp efficiency (grasps / GRAB presses, minus 1/3 per drop).
+#  Positions: [x forward, y left] from the robot's base [m]; heights above the table top.
+# =============================================================================================
+[rings]
+outer_diameter = 0.10                  # a ring's outside diameter [m]
+thickness = 0.014                      # its tube's thickness (radius to the tube's middle 0.043, hole radius 0.036)
+segments = 28                          # it's made of this many short overlapping capsules (so it really hangs)
+mass = 0.03                            # [kg] the whole ring
+friction = [1.2, 0.02, 0.001]          # sliding, twisting, rolling (painted plastic on a rubber-tipped gripper)
+holder_post = [0.007, 0.007, 0.035]    # each of a holder's 4 posts [x, y, height]
+holder_spacing = [0.025, 0.05]         # the posts: [across the ring's plane, along it] between their centres
+holder_base = [0.045, 0.11, 0.004]     # the holder's thin base plate (seen only, nothing touches it)
+peg_radius = 0.008
+peg_length = 0.11
+peg_friction = [0.6, 0.005, 0.0001]
+peg_plate = [0.07, 0.07, 0.008]        # the base plate under each peg's post [x, y, thickness]
+held_lift = 0.02                       # a ring this far above where it would rest ...
+held_distance = 0.08                   # ... with its centre this close to the gripper's pinch point = held
+on_peg_margin = 0.006                  # on its peg: the ring's centre within (hole - peg radius + this) of the axis
+rest_speed = 0.03                      # [m/s] a ring hanging slower than this is done
+check_hz = 20                          # the rules are checked this often
+rotation = "full"                      # the gripper tilts and twists with the phone
+
+# One ring per entry, left to right as the candidate sees them. ring = the ring and its holder
+# [x, y]; peg = [x, y]; peg_height = the post's height (the peg leaves its top; 0 = no post, the
+# peg starts 8 mm above the table); peg_tilt_deg from straight up, toward peg_yaw_deg (180 =
+# pointing back toward the robot). The most tilted peg on the arm's own side, the nearly level one
+# farthest away: a UR5e can't hold the gripper tilted 45 degrees at the far side.
+[[rings.rings]]
+name = "red"
+color = "#db2921"
+ring = [0.42, 0.00]
+peg = [0.72, 0.00]
+peg_height = 0.10
+peg_tilt_deg = 45                      # (turn the ring 45 degrees)
+peg_yaw_deg = 180
+
+[[rings.rings]]
+name = "blue"
+color = "#266be6"
+ring = [0.42, 0.29]
+peg = [0.70, 0.29]
+peg_height = 0.13
+peg_tilt_deg = 60                      # (turn it 30 degrees)
+peg_yaw_deg = 180
+
+[[rings.rings]]
+name = "green"
+color = "#24b34d"
+ring = [0.40, 0.53]
+peg = [0.60, 0.52]
+peg_height = 0.17
+peg_tilt_deg = 80                      # (nearly level: turn it about 10 degrees)
+peg_yaw_deg = 180
+
+[[rings.levels]]
+key = "practice"
+title = "Practice: ring on pegs"
+text = "Take a ring by the top of its tube, lift it, tilt it so the peg straight ahead of it goes through the hole, then let go. Hang all three."
+scored = false
+time_limit_s = 180
+target_rounds = 1
+end_after_rounds = 1                   # the level ends after this many rounds (0: only when the time is up)
+
+[[rings.levels]]
+key = "rings"
+title = "Ring on pegs"
+text = "Hang each ring on the peg straight ahead of it, the same colour. The pegs lean at different angles: tilt the ring with your phone so the peg goes through the hole, then let go. When all three are on, they come back for the next round: as many rounds as you can."
+scored = true
+time_limit_s = 300                     # (5 minutes)
+target_rounds = 3                      # 9 rings hung = full marks for rings
+end_after_rounds = 0
