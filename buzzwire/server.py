@@ -537,6 +537,10 @@ def main():
     ap.add_argument("--player", default="dev")
     a = ap.parse_args()
     srv = Server(a)
+    t = time.perf_counter()                       # warm up: build each game once (textures, caches), so
+    for cls, _, _ in GAMES.values():              # the first level in a test doesn't take half a second
+        cls(srv.cfg)
+    print(f"[start] games warmed up in {time.perf_counter() - t:.1f} s", flush=True)
     print(f"\n  Robot Buzz Wire: http://localhost:{a.port}   phone: {srv.phone_url() or '(no tunnel)'}\n", flush=True)
     web.run_app(srv.app(), host=a.host, port=a.port, print=None)
 
