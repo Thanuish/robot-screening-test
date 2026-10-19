@@ -157,7 +157,8 @@ def parse(raw: dict, p="<config>") -> Config:
 
     r = raw.get("robot", {})
     c.keys(r, "robot", ("model", "gripper", "base", "home_deg", "max_speed", "max_turn_deg", "joint_speed_deg",
-                        "arm_clearance", "finger_clearance", "servo_stiffness"))
+                        "arm_clearance", "finger_clearance", "servo_stiffness",
+                        "servo_feedforward"))
     robot = dict(model=c.text(r, "model", "robot", "ur5e", tuple(ROBOTS)),
                  gripper=c.text(r, "gripper", "robot", "robotiq_2f85", GRIPPERS),
                  base=c.vec(r, "base", "robot", 2, [0.0, 0.0]),
@@ -167,7 +168,8 @@ def parse(raw: dict, p="<config>") -> Config:
                  joint_speed=math.radians(c.num(r, "joint_speed_deg", "robot", 120, lo=1, hi=720)),
                  arm_clearance=c.num(r, "arm_clearance", "robot", 0.02, lo=0.0, hi=0.3),
                  finger_clearance=c.num(r, "finger_clearance", "robot", 0.003, lo=0.0, hi=0.3),
-                 servo_stiffness=c.num(r, "servo_stiffness", "robot", 1.0, lo=0.2, hi=10.0))
+                 servo_stiffness=c.num(r, "servo_stiffness", "robot", 1.0, lo=0.2, hi=10.0),
+                 servo_feedforward=c.flag(r, "servo_feedforward", "robot", True))
     ct = raw.get("controls", {})
     c.keys(ct, "controls", ("motion_scale", "smoothing_s", "filter", "min_cutoff_hz", "beta", "rot_beta", "glide_s",
                                      "jitter_buffer_s", "jitter_buffer_max_s", "input_timeout_s"))

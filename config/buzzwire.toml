@@ -29,6 +29,8 @@ joint_speed_deg = 180          # [deg/s] top speed of each joint (a UR5e's limit
 arm_clearance = 0.02           # the forearm and wrist keep at least this far above the table [m]
 finger_clearance = 0.003       # every part of the gripper at least this far (the fingers can reach down to grab)
 servo_stiffness = 1.0          # x the UR5e's joint motor stiffness (1 = the real one; 3 follows a little quicker but is twitchy)
+servo_feedforward = true       # the joint motors also get the commanded velocity (as a real robot's servo):
+                               # they follow without trailing ~0.1 s behind, no stiffer
 
 [controls]
 motion_scale = 1.0             # the robot moves this many cm per cm the phone moves
