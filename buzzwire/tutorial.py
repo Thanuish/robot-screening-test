@@ -1,6 +1,8 @@
 """The tutorial: the controls taught one at a time, each step checked before the next one shows.
 The scene is the cube tasks' practice (a yellow cube, a green square); the steps:
 
+    look      drag with the mouse on the computer: the view turns (20 degrees)
+    zoom      scroll the mouse wheel: the view zooms (15 % nearer or farther)
     move      push the left stick: the gripper moves (10 cm)
     updown    right stick up and down: the gripper rises and lowers (5 cm)
     turn      right stick sideways: the gripper turns (30 degrees)
@@ -22,6 +24,9 @@ from .cubes import CubesGame
 from .config import Config
 
 STEPS = [   # key, title, instruction (with touch joysticks)
+    ("look", "Look around", "On your computer, drag with the mouse to turn the view: look at the robot from another "
+                            "side. Double-click to go back to the start view."),
+    ("zoom", "Zoom", "Scroll the mouse wheel (or pinch on the touchpad) to zoom in and out."),
     ("move", "Move", "Push the LEFT stick: the gripper moves. Forward on the stick = away from you, into the screen."),
     ("updown", "Up and down", "Push the RIGHT stick up and down: the gripper rises and lowers."),
     ("turn", "Turn", "Push the RIGHT stick left or right: the gripper turns."),
@@ -59,6 +64,7 @@ class TutorialGame(CubesGame):
         self.tstep = 0
         self.tdone = {k: None for k, _, _ in STEPS}        # step -> seconds when done
         self._start = None
+        self._view0 = None
 
     def update(self, t: float):
         ee = self.d.site_xpos[self.sc.ee_site].copy()
@@ -66,10 +72,15 @@ class TutorialGame(CubesGame):
             self._start = (ee.copy(), self._yaw(), ee[2], ee[2])
         p0, yaw0, zlo, zhi = self._start
         self._start = (p0, yaw0, min(zlo, ee[2]), max(zhi, ee[2]))
+        if self._view0 is None and self.view_dist is not None:
+            self._view0 = (self.view_yaw, self.view_dist)  # (the view as the screen first reported it)
+        v0 = self._view0
         cube, _, _ = self._obj("tut_cube")
         half = self.tc.objects["tut_cube"].half
         near = np.hypot(ee[0] - cube[0], ee[1] - cube[1]) < 0.025
         checks = {
+            "look": lambda: v0 is not None and abs((self.view_yaw - v0[0] + np.pi) % (2 * np.pi) - np.pi) > np.radians(20),
+            "zoom": lambda: v0 is not None and abs(self.view_dist - v0[1]) > 0.15 * v0[1],
             "move": lambda: np.hypot(ee[0] - p0[0], ee[1] - p0[1]) > 0.10,
             "updown": lambda: self._start[3] - self._start[2] > 0.05,
             "turn": lambda: abs((self._yaw() - yaw0 + np.pi) % (2 * np.pi) - np.pi) > np.radians(30),
@@ -135,6 +146,13 @@ def play_tutorial(bot):
     g = bot.g
     key = g.level.key
     bot.start()
+    # look and zoom: what the screen reports when the mouse turns and zooms the view
+    g.view_yaw, g.view_dist = 0.0, 1.4
+    bot.run_ticks(5)
+    g.view_yaw = 0.5
+    bot.run_ticks(5)
+    g.view_dist = 1.0
+    bot.run_ticks(5)
     tel = g.teleop
     p0 = tel.target_pos.copy()
     bot.move(p0 + [0.12, 0, 0], DOWN, 1.2)                                # move

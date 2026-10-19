@@ -31,6 +31,9 @@
     #prog { height: 10px; border-radius: 6px; background: rgba(255,255,255,.1); overflow: hidden; }
     #bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--go)); box-shadow: 0 0 14px rgba(54,194,255,.7); transition: width .25s; }
     #phoneChip { position: fixed; left: 16px; bottom: 22px; padding: 8px 14px; font-size: 13px; color: var(--dim); }
+    #mouseHint { position: fixed; left: 16px; bottom: 84px; padding: 8px 14px; font-size: 13px; color: #cfd6e1; pointer-events: none; }
+    #mouseHint b { color: #fff; }
+    .tip { color: #cfd6e1; font-size: 14px; margin: 6px 0 0; }
     #phoneChip .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); margin-right: 8px; }
     #phoneChip.ok .dot { background: var(--go); box-shadow: 0 0 10px var(--go); } #phoneChip.ok { color: #d6ffe9; }
     /* centre: countdown, messages, pairing */
@@ -138,6 +141,7 @@
   </div>
   <div class="glass" id="progWrap"><div class="ends"><span>START</span><span>FINISH</span></div><div id="prog"><div id="bar"></div></div></div>
   <div class="glass" id="phoneChip"><span class="dot"></span><span id="phoneT">Phone not connected</span></div>
+  <div class="glass hidden" id="mouseHint">🖱 <b>Drag</b> to look around · <b>scroll</b> to zoom · <b>double-click</b> to reset the view</div>
   <div id="count"></div>
   <div id="toast"></div>
   <div id="flash"></div>
@@ -173,7 +177,8 @@
     <p>You'll control a real robot arm (a simulation of it) from your phone and watch it on this screen. First a short
       tutorial and practice, then the assessment. It takes about 25 minutes.</p>
     <div class="facts"><div><b>1. Tutorial</b>learn the controls</div><div><b>2. Practice</b>as often as you like (up to 3 rounds)</div><div><b>3. Assessment</b><span id="wTasks">a few</span> short tasks</div></div>
-    <p>You need this computer and your phone (iPhone or Android), both connected to the internet.</p>
+    <p>You need this computer and your phone (iPhone or Android), both connected to the internet. You steer the robot
+      with your phone; with the mouse you look around: drag to turn the view, scroll to zoom.</p>
     <label>Your name</label><input type="text" id="wName" autocomplete="name">
     <label class="chk"><input type="checkbox" id="wConsent"><span>I agree that my control of the robot is recorded and scored for my
       application. The recording is used only to evaluate this assessment.</span></label>
@@ -196,6 +201,7 @@
   </div></div>
   <div id="card" class="cover hidden"><div class="glass card">
     <div class="lab" id="cTitle"></div><h1 class="sub" id="cSub"></h1><p id="cText"></p>
+    <p class="tip">Tip: drag with the mouse to look at the robot from another side, scroll to zoom, double-click to go back.</p>
     <p style="color:var(--dim)" id="cLimit"></p><div class="count" id="cCount"></div>
   </div></div>
   <div id="thin" class="hidden">0:00</div>

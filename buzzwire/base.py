@@ -190,6 +190,7 @@ class RobotGame:
         self.input_log: dict[str, list] = {}
         self.latest_input: dict | None = None
         self.view_yaw = 0.0
+        self.view_dist = None           # the screen's camera distance (the tutorial's zoom step)
         self.li = -1
         self.finished = False
         self.next_level()

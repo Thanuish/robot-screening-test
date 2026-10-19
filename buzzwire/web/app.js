@@ -627,6 +627,7 @@ function onStatus(s) {
   const menu = s.state === 'menu';
   if (menu !== inMenu) {
     inMenu = menu;
+    if (!CAND) show('mouseHint', !menu);
     for (const id of ['top', 'progWrap', 'steps']) $(id).classList.toggle('hidden', menu);
     $('menu').classList.toggle('hidden', !menu);
     $('toMenu').classList.toggle('hidden', menu); $('restart').classList.toggle('hidden', menu);
@@ -715,10 +716,13 @@ function viewYaw() {                     // the camera's heading in MuJoCo's fra
   d.applyMatrix4(inv.copy(mj.matrixWorld).invert().setPosition(0, 0, 0));
   return Math.atan2(d.y, d.x);
 }
+let sentDist = null;
 setInterval(() => {
-  const y = viewYaw();
-  // (only counted as sent once it really went out: the first try can come before the connection is open)
-  if ((sentYaw === null || Math.abs(y - sentYaw) > 0.01) && send({ type: 'view', yaw: y })) sentYaw = y;
+  const y = viewYaw(), dist = camera.position.distanceTo(controls.target);
+  // (the heading for the phone's "forward", the distance for the tutorial's zoom step; only counted
+  // as sent once it really went out: the first try can come before the connection is open)
+  if ((sentYaw === null || Math.abs(y - sentYaw) > 0.01 || Math.abs(dist - sentDist) > 0.01 * sentDist)
+      && send({ type: 'view', yaw: y, dist })) { sentYaw = y; sentDist = dist; }
 }, 200);
 
 // ------------------------------------------------------------ frame loop, frame rate, auto quality
@@ -779,6 +783,7 @@ function candidateView(s) {
   }
   // the assessment: only the robot and a thin timer
   for (const id of ['top', 'progWrap', 'steps', 'phoneChip']) if (assessing || !playing) show(id, false); else if (id !== 'steps') show(id, true);
+  show('mouseHint', playing && (st === 'tutorial' || st === 'practice'));   // (not in the assessment: nothing on the view)
   show('thin', assessing && s.state === 'play');
   if (assessing && s.limit) { const left = Math.max(0, s.limit - s.time); $('thin').textContent = fmt(left); $('thin').classList.toggle('low', left < 20); }
   if (st === 'done') { $('doneT').textContent = 'Thank you, your test is complete'; $('doneP').textContent = 'Your results have been saved. You can close this page and put your phone down.'; show('doneMenu', false); }

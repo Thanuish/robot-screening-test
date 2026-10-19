@@ -125,6 +125,7 @@ class Server:
         self._game = None                     # the game chosen in the menu (None: the menu)
         self.session = None                   # a candidate's test (session.py); its game is shown instead
         self.view_yaw = 0.0
+        self.view_dist = None
         self.controls = "touch"               # what the phone says it uses: motion, tilt, touch
         self.assets: dict[str, bytes] = {}   # meshes by their fingerprint (gzipped JSON)
         self.bodies, self.scene_gz = [], gzip.compress(b'{"bodies": [], "geoms": [], "meshes": [], "materials": [], "textures": [], "flexes": []}')
@@ -146,6 +147,7 @@ class Server:
         self._game = GAMES[kind][0](self.cfg, levels=levels, out_dir=out, player=self.args.player)
         self.kind = kind
         self.game.view_yaw = self.view_yaw            # (the screen's camera heading, for the phone's "forward")
+        self.game.view_dist = self.view_dist
         self._export()
         print(f"[game] {GAMES[kind][1]}", flush=True)
 
@@ -177,6 +179,7 @@ class Server:
         good); the scene itself only refers to them. The model's textures are left out (the game
         page has its own materials). Was ~4.5 MB to every browser at every level change."""
         g = self.game
+        g.view_yaw, g.view_dist = self.view_yaw, self.view_dist   # (a new game: the screen's view as it is)
         self.bodies, payload = export_scene(g.m, textures=False, compress=False)
         refs = []
         for mesh in payload["meshes"]:
@@ -534,8 +537,10 @@ class Server:
                 n["gap"] = 0.0
         elif t == "view":
             self.view_yaw = float(m.get("yaw", 0.0))
+            self.view_dist = float(m["dist"]) if isinstance(m.get("dist"), (int, float)) else None
             if self.game is not None:
                 self.game.view_yaw = self.view_yaw
+                self.game.view_dist = self.view_dist
         elif t == "visible":                         # the game screen is shown / hidden (a background tab)
             if ws in self.clients:
                 self.clients[ws].hidden = not m.get("on", True)

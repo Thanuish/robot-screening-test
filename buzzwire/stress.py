@@ -21,8 +21,9 @@ from .cubes import CubesGame
 from .game import BuzzWireGame
 from .tower import TowerGame
 from .tutorial import TutorialGame
+from .rings import RingsGame
 
-GAMES = {"tutorial": TutorialGame, "cubes": CubesGame, "tower": TowerGame, "wire": BuzzWireGame}   # (wire: no longer in the menu or the test)
+GAMES = {"tutorial": TutorialGame, "cubes": CubesGame, "tower": TowerGame, "rings": RingsGame, "wire": BuzzWireGame}   # (wire: no longer in the menu or the test)
 
 
 def run(kind: str, seed: int, seconds: float):
