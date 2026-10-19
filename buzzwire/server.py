@@ -460,6 +460,23 @@ class Server:
 
         app.router.add_get("/admin", local_only(admin_page))
         app.router.add_get("/admin/api", local_only(admin_api))
+
+        async def admin_candidate(request):          # one candidate: every attempt's full results
+            code = request.match_info["code"].upper()
+            c = CAND.get(code)
+            if c is None:
+                raise web.HTTPNotFound()
+            attempts = []
+            folder = CAND.folder(code)
+            for f in sorted(folder.glob("*/results.json"), reverse=True) if folder.exists() else []:
+                try:
+                    attempts.append(dict(json.loads(f.read_text(encoding="utf-8")), folder=f.parent.name))
+                except (OSError, json.JSONDecodeError):
+                    continue
+            running = self.session is not None and self.session.code == code
+            return web.json_response(dict(code=code, name=c.get("name"), email=c.get("email"), controls=c.get("controls"),
+                                          running=running, attempts=attempts, games={k: v[1] for k, v in GAMES.items()}))
+        app.router.add_get("/admin/api/candidate/{code}", local_only(admin_candidate))
         app.router.add_post("/admin/candidates", local_only(admin_new))
         app.router.add_post("/admin/candidates/{code}/controls", local_only(admin_controls))
         app.router.add_get("/scene.json", scene)
