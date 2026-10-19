@@ -2,16 +2,28 @@
 
 A screening test for robot operators. The candidate controls a robot arm (a UR5e with a Robotiq
 2F-85 gripper, real physics on the server) from their **phone** and watches it on their
-**computer**, seen from behind the robot. Three games: **Buzz Wire** (slide a ring along a wire
-without touching it), **Cube Tasks** (shapes into outlines, objects into bins) and **Tower** (stack
-blocks as high as you can).
+**computer**, seen from behind the robot. Three games: **Cube Tasks** (shapes into outlines,
+objects into bins), **Tower** (stack blocks as high as you can) and **Ring on pegs** (tilt each
+ring onto a leaning peg, round after round). The older Buzz Wire game is no longer in the menu or
+the test (its code is still in `game.py`).
 
 ## Sending the test to a candidate
 
 **The admin page**, `http://localhost:8000/admin` (it opens only on the server PC, e.g. through the
 SSH forward; a login comes with hosting): create a candidate (name, e-mail, **controls**), copy
 their link, change their controls, see their status, stage, scores, practice rounds, phone and the
-controls they actually used. The same from the command line:
+controls they actually used.
+
+**Details** (per candidate) shows everything recorded, for every attempt:
+- the time of each stage, the phone and controls used, when each tutorial step was learned, and
+  the practice scores;
+- a card per assessment task with its numbers and a timeline in words:
+  - **Tower:** each block grabbed, placed (with the tower's height), taken off, or fallen (with
+    the height before), and each new best height that stood;
+  - **Cube Tasks:** each grasp, drop and step done;
+  - **Ring on pegs:** each grasp, each ring on or off its peg, each drop and each round.
+
+While a test is running, the details stay current. The same from the command line:
 
 ```
 python -m buzzwire.candidates new "Jane Doe" jane@example.com --controls touch   # prints her link
@@ -29,13 +41,15 @@ Put the link in the invitation e-mail. The candidate opens it **on their compute
 1. **Welcome**: name, consent.
 2. **Connect the phone**: one QR code; the phone's camera opens it, and the page picks the iPhone
    or Android controller by itself (`/p/<code>`), with the controls set for this candidate.
-3. **Tutorial**: the controls one at a time, each checked before the next (move, up / down, turn,
-   above the cube, lower, grab, put it down).
-4. **Practice**: a short buzz wire and a small tower, with hints.
+3. **Tutorial**: the controls one at a time, each checked before the next: first the mouse (drag
+   to look around, scroll to zoom), then the phone (move, up / down, turn, above the cube, lower,
+   grab, put it down).
+4. **Practice**: a cube into a square, a small tower, one round of rings, with hints. A hint on
+   the screen reminds them of the mouse (drag, scroll, double-click to reset).
 5. **Ready?**: "Start the assessment" or "Practise again" (at most 3 rounds; the number is recorded).
-6. **Assessment**: shapes, sorting, buzz-wire curves, a cube tower. A card before each task says
-   what to do; while playing, the screen shows only the robot and a thin timer (a red edge glow on
-   a wire touch). No scores are shown.
+6. **Assessment**: shapes, sorting, a cube tower, ring on pegs (5 minutes, as many rounds as they
+   can). A card before each task says what to do, with a tip about the mouse. While playing, the
+   screen shows only the robot and a thin timer. No scores are shown.
 7. **Thank you**.
 
 Results: `data/buzzwire/candidates/<code>/<date>/results.json` (each stage's time, the practice
@@ -136,7 +150,41 @@ messages, and each page's frame rate and display delay.
 else. Vibration shakes the sensors the phone's tracking uses. Everything else is shown on the
 phone's screen, which has no animations while tracking.
 
-## Buzz Wire: how a level goes
+## Ring on pegs
+
+Three rings (red, blue, green) stand on their edge in small wooden holders in a row in front of
+the robot. Straight ahead of each, further out, is a peg of the same colour on a grey post. The
+pegs lean 45, 60 and 80 degrees, so each ring needs a different tilt of the hand
+(`rotation = "full"`).
+
+**How to play:** take a ring by the top of its tube, lift it, tilt it so its hole lines up with
+the peg, slide it on from the tip, and let go. When all three hang on their pegs and nothing is
+held, the round counts. The rings jump back into their holders and the next round starts, until
+the time is up. Screens show "Ring on pegs · round N", the rings hung this round as three ticks,
+and "Round N!" on each new round.
+
+**Rules**, checked 20 times a second (`[rings]`):
+- **On its peg:** the ring's centre lies along the peg's axis, between its base and its tip, and
+  close enough to the axis for the peg to be through the hole.
+- **Done:** on its peg, not held, and nearly still. It counts while it hangs there; a ring that
+  falls off un-counts.
+- **Held:** lifted 2 cm above where it would rest, and within 8 cm of the gripper. Where a ring
+  rests depends on how it lies: on its edge, or flat.
+- **Grasps and drops:** a grasp is a GRAB that lifted a ring (at most one per GRAB). A drop is a
+  ring that left the hand while GRAB was still closed, and not onto its peg.
+
+**Score (0-100):** 80 × rings hung / (3 × `target_rounds`, i.e. 9 rings) + 20 × grasp efficiency
+(grasps / GRAB presses, minus 1/3 per drop). Results: rounds, rings hung, each round's time,
+grasps, drops, and the timeline.
+
+**Its own camera** (`view_eye`, `view_look_at`): the rings stand to the robot's left, so the view
+is from a little left of the robot. All three columns stand in a row, none behind the arm.
+
+The config checks that each ring and peg is on the table and 0.35-0.85 m from the arm's base,
+that a peg tilted more than 30 degrees has a post, and that the ring's hole is clearly bigger than
+the peg.
+
+## Buzz Wire (not in the menu or the test any more): how a level goes
 
 1. The robot already holds the wand (fixed in its hand: it can't slip out); its ring is around
    the wire at the start (the red sleeve).
@@ -164,6 +212,7 @@ python -m buzzwire.bot --replay                 # Buzz Wire: every level, 0 touc
 python -m buzzwire.bot --clumsy                 # wobbles past the ring's clearance: touches are counted
 python -m buzzwire.bot --game cubes --replay    # Cube Tasks: every task done
 python -m buzzwire.bot --game tower --replay    # Tower: stacks every block
+python -m buzzwire.bot --game rings --replay    # Ring on pegs: 2 rounds (~41 s each), score 73.3; practice 1 round
 python -m buzzwire.stress                       # every game shoved around like an impatient person:
                                                 # no control tick may take over 50 ms
 ```
@@ -182,6 +231,7 @@ buzzwire/
   game.py        Buzz Wire: touches, the guide at the wire, progress
   cubes.py       Cube Tasks (the screening test's pick / shapes / sort tasks)
   tower.py       Tower: blocks one at a time, height, falls
+  rings.py       Ring on pegs: rings, holders, leaning pegs, rounds
   scene.py       the MuJoCo scenes: robot and room; the buzz-wire board, wire and wand
   spline.py      the wire's curve (arc length, closest point)
   ik.py          inverse kinematics on Pinocchio (joint limits and speeds, table keep-out on the real shapes)
