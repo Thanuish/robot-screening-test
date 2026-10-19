@@ -37,10 +37,19 @@
       box-shadow: 0 10px 30px rgba(54,120,255,.45), inset 0 1px 0 rgba(255,255,255,.25); text-transform: uppercase; }
     #start:active { transform: scale(.98); }
     #start:disabled { background: #2a2f3a; box-shadow: none; color: #6c7380; }
-    #startTouch { margin-top: auto; width: 100%; padding: 20px; font-size: 19px; font-weight: 900; letter-spacing: .06em;
-      border-radius: 16px; background: linear-gradient(135deg, #2fdc7f, #19a35b); color: #fff; text-transform: uppercase;
-      box-shadow: 0 10px 30px rgba(47,220,127,.35), inset 0 1px 0 rgba(255,255,255,.25); }
-    #start.alt { margin-top: 14px; padding: 14px; font-size: 14px; background: #232835; box-shadow: none; border: 1px solid #39404f; }
+    #start { background: linear-gradient(135deg, #2fdc7f, #19a35b); box-shadow: 0 10px 30px rgba(47,220,127,.35), inset 0 1px 0 rgba(255,255,255,.25); }
+    #startTouch { width: 100%; margin-top: 14px; padding: 14px; font-size: 14px; font-weight: 800; letter-spacing: .06em;
+      border-radius: 16px; text-transform: uppercase; color: #dfe6f0; background: #232835; border: 1px solid #39404f; }
+    #startTouch.primary { margin-top: auto; padding: 20px; font-size: 19px; color: #fff; border: 0;
+      background: linear-gradient(135deg, #2fdc7f, #19a35b); box-shadow: 0 10px 30px rgba(47,220,127,.35); }
+    /* warm-up: the phone's tracking locks on while it is moved a little */
+    #warm { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 20px;
+      background: rgba(11,13,18,.92); z-index: 3; border-radius: 26px; }
+    #warm h3 { margin: 10px 0 6px; font-size: 21px; } #warm p { color: #cfd5df; margin: 0 0 14px; }
+    #warm .bar { width: 80%; max-width: 280px; height: 10px; border-radius: 6px; background: rgba(255,255,255,.1); overflow: hidden; margin: 0 auto; }
+    #warm .bar div { height: 100%; width: 0; background: linear-gradient(90deg, #36c2ff, #2fdc7f); transition: width .15s; }
+    #warm svg { width: 90px; height: 50px; animation: sway 1.6s ease-in-out infinite; }
+    @keyframes sway { 0%, 100% { transform: translateX(-24px); } 50% { transform: translateX(24px); } }
     /* touch controls: two joysticks */
     #sticks { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .stick { position: relative; border-radius: 26px; background: var(--panel); border: 1px solid rgba(54,194,255,.22);
@@ -139,14 +148,17 @@
     </div>
     <ul class="steps">
       <li><span class="num">1</span><span>Keep the game open on your <b>computer screen</b>.</span></li>
-      <li><span class="num">2</span><span>Tap <b>PLAY WITH TOUCH CONTROLS</b> below.</span></li>
-      <li><span class="num">3</span><span><b>Left stick</b>: move the gripper (forward = into the screen). <b>Right stick</b>: up / down and turn.</span></li>
-      <li><span class="num">4</span><span><b>GRAB</b> closes the gripper, <b>RELEASE</b> opens it. Push the sticks gently for fine moves.</span></li>
+      <li><span class="num">2</span><span>Tap <b>START</b> and allow the camera: the phone uses it only to feel how you move it.
+        Nothing is shown or sent.</span></li>
+      <li><span class="num">3</span><span>Hold the phone like a remote, <b>back camera pointing down at your desk</b>
+        (not at the computer screen), in a well-lit room.</span></li>
+      <li><span class="num">4</span><span><b>Hold the big pad</b> and move the phone: the robot moves the same way. Let go to
+        stop. <b>GRAB</b> closes the gripper.</span></li>
     </ul>
-    <button id="startTouch">Play with touch controls</button>
-    <div class="fine">Two joysticks on the screen. Works on any phone.</div>
-    <button id="start" class="alt">Motion control (move the phone)</button>
-    <div class="fine">Advanced: the phone's camera tracks your hand. Android + Chrome with Google Play Services for AR.</div>
+    <button id="start">Start: move your phone</button>
+    <div class="fine">Recommended. Chrome on Android with Google Play Services for AR.</div>
+    <button id="startTouch" class="alt">Use touch controls instead</button>
+    <div class="fine" id="startTouchFine">Two joysticks on the screen, if motion control doesn't work on this phone.</div>
     <p id="err" class="fine"></p>
   </div>
 
@@ -170,6 +182,11 @@
       <div class="ring"></div><div class="pulse"></div>
       <div class="core" id="padT"><span>HOLD<small>TO MOVE</small></span></div>
       <div id="count" class="hidden"></div>
+      <div id="warm" class="hidden"><div>
+        <svg viewBox="0 0 90 50" fill="none"><rect x="30" y="4" width="30" height="42" rx="6" stroke="#9fdcff" stroke-width="3"/><path d="M8 25h10M72 25h10" stroke="#2fdc7f" stroke-width="3" stroke-linecap="round"/></svg>
+        <h3>Move the phone slowly left and right</h3>
+        <p>Camera pointing at your desk. This lets the phone find its way around.</p>
+        <div class="bar"><div id="warmBar"></div></div></div></div>
     </div>
     <div id="sticks" class="hidden">
       <div class="stick" id="stL"><div class="ring2"></div><div class="knob"></div><span>MOVE</span></div>

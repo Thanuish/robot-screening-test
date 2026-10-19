@@ -42,8 +42,8 @@
       background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; }
     .big-btn { width: 100%; padding: 19px; font-size: 18px; font-weight: 900; letter-spacing: .05em; border-radius: 16px;
       text-transform: uppercase; color: #fff; }
-    #goTouch { margin-top: auto; background: linear-gradient(135deg, #2fdc7f, #19a35b); box-shadow: 0 10px 30px rgba(47,220,127,.35); }
-    #goTilt { margin-top: 12px; font-size: 15px; padding: 15px; background: #232835; border: 1px solid #39404f; }
+    #goTilt { margin-top: auto; background: linear-gradient(135deg, #2fdc7f, #19a35b); box-shadow: 0 10px 30px rgba(47,220,127,.35); }
+    #goTouch { margin-top: 12px; font-size: 15px; padding: 15px; background: #232835; border: 1px solid #39404f; }
     .fine { color: var(--dim); font-size: 12px; text-align: center; margin-top: 8px; }
     #err { color: #ff8a95; text-align: center; font-size: 13px; min-height: 1em; }
 
@@ -104,15 +104,18 @@
     </div>
     <ul class="steps">
       <li><span class="num">1</span><span>Keep the game open on your <b>computer screen</b>.</span></li>
-      <li><span class="num">2</span><span>Tap <b>PLAY WITH TOUCH CONTROLS</b>. Turn the sound on: the phone beeps when you touch the wire.</span></li>
-      <li><span class="num">3</span><span><b>Left stick</b>: move the gripper (forward = into the screen). <b>Right stick</b>: up / down and turn.</span></li>
-      <li><span class="num">4</span><span><b>GRAB</b> closes the gripper, <b>RELEASE</b> opens it. Push the sticks gently for fine moves.</span></li>
+      <li><span class="num">2</span><span>Tap <b>START</b> and tap <b>Allow</b> when Safari asks to use motion. Turn the sound on:
+        the phone beeps when the robot touches something.</span></li>
+      <li><span class="num">3</span><span><b>Hold the left pad</b> and tilt the phone like a joystick: tip it away from you to
+        move forward, to the side to move sideways. Let go to stop.</span></li>
+      <li><span class="num">4</span><span><b>Right stick</b>: up / down and turn. <b>GRAB</b> closes the gripper,
+        <b>RELEASE</b> opens it.</span></li>
     </ul>
     <p id="err"></p>
-    <button class="big-btn" id="goTouch">Play with touch controls</button>
+    <button class="big-btn" id="goTilt">Start: tilt to steer</button>
+    <div class="fine">Recommended: you steer by moving the iPhone.</div>
+    <button class="big-btn" id="goTouch">Use touch controls instead</button>
     <div class="fine">Two joysticks on the screen.</div>
-    <button class="big-btn" id="goTilt">Tilt steering</button>
-    <div class="fine">Hold the left pad and tilt the iPhone to move the gripper. Safari asks to use motion: tap Allow.</div>
   </div>
 
   <div id="ctl" class="hidden">

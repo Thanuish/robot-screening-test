@@ -42,7 +42,7 @@ class Session:
         self.task_i = 0                # assessment: which task (0-based)
         self.card_until = None
         self.started = time.time()
-        self.res = dict(code=code, name=name, device=device, controls="touch joysticks",
+        self.res = dict(code=code, name=name, device=device, controls=None,
                         started=time.strftime("%Y-%m-%d %H:%M:%S"), finished=None, stage="welcome",
                         tutorial=None, practice=[], assessment={}, scores={}, stage_times={})
 

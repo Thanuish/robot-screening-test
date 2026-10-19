@@ -10,9 +10,11 @@ const vibrate = (p) => { try { if (navigator.vibrate) navigator.vibrate(p); } ca
 
 // ------------------------------------------------------------ network
 let ws = null, wsOpen = false, status = {}, rtt = null;
+let controlsMode = null;              // 'motion' or 'touch': told to the server (recorded; the tutorial's texts)
+function setControls(mode) { controlsMode = mode; if (wsOpen) ws.send(JSON.stringify({ type: 'controls', mode })); }
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-  ws.onopen = () => { wsOpen = true; };
+  ws.onopen = () => { wsOpen = true; if (controlsMode) ws.send(JSON.stringify({ type: 'controls', mode: controlsMode })); };
   ws.onclose = () => { wsOpen = false; showNet(); setTimeout(connect, 1000); };
   ws.onmessage = (ev) => {
     if (typeof ev.data !== 'string') return;          // robot poses for the game screen: not needed here
@@ -70,7 +72,7 @@ function showStatus() {
   }
   lastLevel = s.level;
   let msg = '';
-  if (s.state === 'waiting') msg = touchMode ? 'Push a stick to start' : 'Hold the pad and move to start';
+  if (s.state === 'waiting') msg = touchMode ? 'Push a stick to start' : warmed ? 'Hold the pad and move the phone to start' : '';
   else if (s.state === 'play' && !s.held && !s.start_held && s.game === 'wire') msg = 'Pick up the wand by its handle';
   if (s.message && s.message !== lastMsg) { lastMsg = s.message; msgT = performance.now(); }
   if (performance.now() - msgT < 2500) msg = s.message;
@@ -133,6 +135,8 @@ function yawOf(q) {             // heading of the phone's back camera (or top ed
   return Math.atan2(-hx, -hz);
 }
 let calYaw = 0, lastViewYaw = 0, lastRotation = 'yaw';
+const WARM_MS = 1500;
+let warmed = false, warmMs = 0;
 const mul3 = (A, B) => A.map(r => [0, 1, 2].map(j => r[0] * B[0][j] + r[1] * B[1][j] + r[2] * B[2][j]));
 const T3 = (A) => [0, 1, 2].map(i => [A[0][i], A[1][i], A[2][i]]);
 function quatToMat([x, y, z, w]) {
@@ -190,7 +194,7 @@ function send(pose, tracked) {
       const a = (yaw - calYaw + vy) / 2;
       q = [Math.cos(a), 0, 0, Math.sin(a)];
     }
-    right = { pose: [...mj, ...q], grip: moving && tracked ? 1 : 0, stick: [0, closed ? 1 : -1], buttons: [], epoch };
+    right = { pose: [...mj, ...q], grip: moving && tracked && warmed ? 1 : 0, stick: [0, closed ? 1 : -1], buttons: [], epoch };
   }
   ws.send(JSON.stringify({ type: 'input', t: performance.now() / 1000, head: null, left: null, right }));
 }
@@ -205,7 +209,12 @@ async function supported() {
   } catch (e) { return 'Motion tracking is not available: ' + e.message; }
   return null;
 }
-supported().then(err => { if (err) { $('err').textContent = 'Motion control is not available here: ' + err; $('start').disabled = true; } });
+supported().then(err => {
+  if (!err) return;                                   // (this phone can't track motion: touch controls instead)
+  $('err').textContent = 'Motion control is not available on this phone (' + err + ') Use the touch controls.';
+  $('start').disabled = true;
+  $('startTouch').classList.add('primary');
+});
 
 $('start').addEventListener('click', async () => {
   const err = await supported();
@@ -216,8 +225,10 @@ $('start').addEventListener('click', async () => {
       requiredFeatures: ['local'], optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body } });
   } catch (e) { $('err').textContent = 'Could not start tracking: ' + e.message; return; }
   vibrate(30);
+  setControls('motion');
   $('intro').classList.add('hidden');
   $('overlay').classList.remove('hidden');
+  warmed = false; warmMs = 0; $('warm').classList.remove('hidden');
   const canvas = document.createElement('canvas');
   const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: true });
   session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
@@ -232,7 +243,7 @@ $('start').addEventListener('click', async () => {
       xrHold = false; refreshMove();
     }
   });
-  let lastSend = 0, wasTracked = null;
+  let lastSend = 0, wasTracked = null, lastT = null;
   const onFrame = (t, frame) => {
     session.requestAnimationFrame(onFrame);
     const layer = session.renderState.baseLayer;
@@ -243,11 +254,19 @@ $('start').addEventListener('click', async () => {
     gl.clear(gl.COLOR_BUFFER_BIT);
     const pose = frame.getViewerPose(ref);
     const tracked = !!pose && !pose.emulatedPosition;
+    // warm-up: the tracking must hold steadily for WARM_MS before MOVE works (it locks on while the
+    // phone is moved a little); a later loss of tracking just pauses the robot, no warm-up again
+    const dt = lastT === null ? 0 : t - lastT; lastT = t;
+    if (!warmed) {
+      warmMs = tracked ? warmMs + dt : 0;
+      $('warmBar').style.width = `${Math.min(100, 100 * warmMs / WARM_MS)}%`;
+      if (warmMs >= WARM_MS) { warmed = true; recenterReq = true; $('warm').classList.add('hidden'); vibrate([30, 40, 60]); }
+    }
     if (tracked !== wasTracked) {
       wasTracked = tracked;
       $('trk').classList.toggle('ok', tracked);
       $('trkT').textContent = tracked ? 'Tracking' : 'Tracking lost';
-      $('lost').classList.toggle('hidden', tracked);
+      $('lost').classList.toggle('hidden', tracked || !warmed);
       if (!tracked) vibrate([20, 40, 20]);
     }
     if (t - lastSend >= 15) { send(pose, tracked); lastSend = t; }     // ~60 messages a second
@@ -323,6 +342,7 @@ setInterval(() => {
 }, 16);
 $('startTouch').addEventListener('click', () => {
   touchMode = true;
+  setControls('touch');
   vibrate(30);
   $('intro').classList.add('hidden');
   $('overlay').classList.remove('hidden');
@@ -340,10 +360,3 @@ $('startTouch').addEventListener('click', () => {
     $('stRT').textContent = tiltOn ? 'TILT · TWIST' : 'UP / DOWN · TURN';
   });
 });
-
-// a candidate's phone (/p/<code> -> /phone?c=<code>): touch joysticks only, the same controls for
-// everyone (motion tracking differs between phones, so results wouldn't be comparable)
-if (new URLSearchParams(location.search).get('c')) {
-  for (const el of [$('start'), $('err'), ...document.querySelectorAll('#intro .fine')].filter(Boolean))
-    if (el.id !== 'startTouchFine') el.classList.add('hidden');
-}

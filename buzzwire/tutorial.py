@@ -21,15 +21,26 @@ from TEST_TELEOP import screen_scene as SS
 from .cubes import CubesGame
 from .config import Config
 
-STEPS = [
+STEPS = [   # key, title, instruction (with touch joysticks)
     ("move", "Move", "Push the LEFT stick: the gripper moves. Forward on the stick = away from you, into the screen."),
     ("updown", "Up and down", "Push the RIGHT stick up and down: the gripper rises and lowers."),
     ("turn", "Turn", "Push the RIGHT stick left or right: the gripper turns."),
-    ("above", "Above the cube", "Move the open gripper right above the yellow cube (watch its shadow on the table)."),
-    ("lower", "Lower it", "Lower the gripper with the right stick until its fingers are on both sides of the cube."),
-    ("grab", "Grab and lift", "Tap GRAB on your phone, then lift the cube with the right stick."),
+    ("above", "Above the cube", "Move the open gripper right above the yellow cube: the ring on the table shows where it is."),
+    ("lower", "Lower it", "Lower the gripper until its fingers are on both sides of the cube (the ring turns green)."),
+    ("grab", "Grab and lift", "Tap GRAB on your phone, then lift the cube."),
     ("place", "Put it down", "Carry the cube over the green square, lower it and tap RELEASE."),
 ]
+# the same steps with the other controls (the phone tells the server which it uses)
+TEXTS = {
+    "motion": {"move": "Hold the big pad and move your phone: the gripper moves the same way. Away from you = into the screen.",
+               "updown": "Hold the pad and raise and lower your phone: the gripper rises and lowers.",
+               "turn": "Hold the pad and turn your phone left or right, like turning a key: the gripper turns.",
+               "above": "Move the open gripper right above the yellow cube: the ring on the table shows where it is. "
+                        "Let go of the pad to stop and move your hand back."},
+    "tilt": {"move": "Hold the LEFT pad and tilt the phone: tip it away from you to move forward, sideways to move sideways.",
+             "updown": "Push the RIGHT stick up and down: the gripper rises and lowers.",
+             "turn": "Push the RIGHT stick left or right: the gripper turns."},
+}
 
 
 class TutorialGame(CubesGame):
@@ -99,9 +110,15 @@ class TutorialGame(CubesGame):
     def hud(self) -> list:
         return [dict(key="step", label="Step", value=f"{min(self.tstep + 1, len(STEPS))}/{len(STEPS)}", alert=False)]
 
+    controls = "touch"                  # (set by the server from what the phone reports)
+
     def status(self) -> dict:
         st = super().status()
-        st["instruction"] = STEPS[self.tstep][2] if self.tstep < len(STEPS) else ""
+        if self.tstep < len(STEPS):
+            key, _, text = STEPS[self.tstep]
+            st["instruction"] = TEXTS.get(self.controls, {}).get(key, text)
+        else:
+            st["instruction"] = ""
         st["progress"] = self.tstep / len(STEPS)
         return st
 

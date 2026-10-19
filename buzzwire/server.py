@@ -82,6 +82,7 @@ class Server:
         self._game = None                     # the game chosen in the menu (None: the menu)
         self.session = None                   # a candidate's test (session.py); its game is shown instead
         self.view_yaw = 0.0
+        self.controls = "touch"               # what the phone says it uses: motion, tilt, touch
         self.kind = None
         if args.game:
             self.new_game(args.game)
@@ -202,7 +203,10 @@ class Server:
         phone = now - self.phone_seen < 1.5
         # the phone is there but doesn't know where it is (its camera sees too little)
         lost = now - self.phone_msg < 1.5 and not phone
-        common = dict(type="status", phone=phone, tracking_lost=lost, scene_id=self.scene_id, view_yaw=self.view_yaw)
+        common = dict(type="status", phone=phone, tracking_lost=lost, scene_id=self.scene_id, view_yaw=self.view_yaw,
+                      controls=self.controls)
+        if self.game is not None and hasattr(self.game, "controls"):
+            self.game.controls = self.controls        # (the tutorial words its steps for these controls)
         if self.session is not None:
             ss = self.session
             st = self.game.status() if self.game is not None else dict(state=ss.stage, hud=[], steps=[])
@@ -368,6 +372,11 @@ class Server:
             self.new_game(str(m.get("game")))
         elif t == "menu":
             self.to_menu()
+        elif t == "controls":                        # the phone: which controls it uses (motion, tilt, touch)
+            self.controls = str(m.get("mode", ""))[:10]
+            if self.session is not None:
+                self.session.res["controls"] = self.controls
+            print(f"[controls] {who}: {self.controls}", flush=True)
         elif t == "join":                            # a candidate's computer screen
             ok = self.join(str(m.get("code", "")))
             await ws.send_str(json.dumps({"type": "joined", "ok": ok}))

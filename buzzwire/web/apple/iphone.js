@@ -12,7 +12,7 @@ const $ = (id) => document.getElementById(id);
 let ws = null, wsOpen = false, status = {}, rtt = null;
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-  ws.onopen = () => { wsOpen = true; showNet(); };
+  ws.onopen = () => { wsOpen = true; showNet(); if (mode) ws.send(JSON.stringify({ type: 'controls', mode })); };
   ws.onclose = () => { wsOpen = false; showNet(); setTimeout(connect, 1000); };
   ws.onmessage = (ev) => {
     if (typeof ev.data !== 'string') return;
@@ -198,6 +198,7 @@ setInterval(() => {
 // ------------------------------------------------------------ start
 function begin(m) {
   mode = m;
+  if (wsOpen) ws.send(JSON.stringify({ type: 'controls', mode: m }));     // (recorded; the tutorial's texts)
   $('intro').classList.add('hidden');
   $('ctl').classList.remove('hidden');
   if (m === 'tilt') { $('stL').classList.add('tilt'); $('stLT').textContent = 'HOLD + TILT THE PHONE'; }
@@ -209,8 +210,3 @@ $('goTilt').addEventListener('click', async () => {
   try { await enableTilt(); begin('tilt'); }
   catch (e) { $('err').textContent = e.message; }
 });
-
-// a candidate's phone (/p/<code> -> /iphone?c=<code>): touch joysticks only, the same controls for everyone
-if (new URLSearchParams(location.search).get('c')) {
-  for (const el of [$('goTilt'), ...document.querySelectorAll('#intro .fine')]) el.classList.add('hidden');
-}
