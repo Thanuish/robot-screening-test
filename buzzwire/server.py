@@ -424,7 +424,13 @@ class Server:
         """One message from a browser or the phone."""
         t, n = m.get("type"), self.counts.setdefault(ws, {"in": 0, "fps": 0})
         if t == "input":
-            self.input_t, self.stale = time.perf_counter(), False
+            now = time.perf_counter()
+            if self.input_t is not None:                 # (for the log: how evenly the phone's messages come)
+                gap = now - self.input_t
+                n["gap"] = max(n.get("gap", 0.0), gap)
+                if self.stale:
+                    print(f"[input] messages again after {gap:.2f} s", flush=True)
+            self.input_t, self.stale = now, False
             if isinstance(m.get("t"), (int, float)) and self.jitter.delay > 0:
                 self.jitter.push(float(m["t"]), m.get("right"))     # (played back evenly by run())
             elif self.game is not None:              # (the menu: no robot to move)
@@ -438,7 +444,8 @@ class Server:
             if n["in"] in (1, 100) or n["in"] % 1000 == 0:
                 c = m.get("right") or {}
                 print(f"[input] {who}: {n['in']} messages; MOVE {c.get('grip')} GRAB {c.get('stick')} "
-                      f"{'menu' if self.game is None else self.game.state}", flush=True)
+                      f"{'menu' if self.game is None else self.game.state}; longest gap {n.get('gap', 0) * 1000:.0f} ms", flush=True)
+                n["gap"] = 0.0
         elif t == "view":
             self.view_yaw = float(m.get("yaw", 0.0))
             if self.game is not None:
