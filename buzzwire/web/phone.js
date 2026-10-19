@@ -4,9 +4,12 @@
 //   hold the pad (anywhere but the buttons) = MOVE (clutch): the gripper follows the phone
 //   GRAB / RELEASE = close / open the gripper
 //   RE-CENTER      = "the direction I'm pointing now is forward (into the screen)"
-// Haptics: grab, release, start / stop moving, a buzz on every touch of the wire, level done.
+// Haptics: one short pulse on GRAB / RELEASE and when the wand starts touching the wire, nothing
+// else: vibration shakes the motion sensors the tracking uses (it would lose track more often).
+// Everything else is shown on the screen.
 const $ = (id) => document.getElementById(id);
-const vibrate = (p) => { try { if (navigator.vibrate) navigator.vibrate(p); } catch (_) {} };
+const PULSE_MS = 25;
+const pulse = () => { try { if (navigator.vibrate) navigator.vibrate(PULSE_MS); } catch (_) {} };
 
 // ------------------------------------------------------------ network
 let ws = null, wsOpen = false, status = {}, rtt = null;
@@ -32,7 +35,7 @@ function showNet() {
 
 // ------------------------------------------------------------ HUD + game feedback
 const fmt = (s) => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
-let lastTouching = false, lastLevel = null, lastMsg = '', buzzT = 0, msgT = 0;
+let lastTouching = false, lastLevel = null, lastMsg = '', msgT = 0;
 function showStatus() {
   const s = status;
   if (s.state === 'menu') {                          // the game menu is on the computer screen
@@ -56,14 +59,13 @@ function showStatus() {
   $('tilt').classList.toggle('hidden', s.rotation !== 'full' || s.finished);
   const c = s.state === 'countdown' && s.countdown > 0 ? Math.ceil(s.countdown) : '';
   $('count').classList.toggle('hidden', !c);
-  if (c && $('count').textContent !== String(c)) { $('count').textContent = c; vibrate(30); }
+  if (c && $('count').textContent !== String(c)) $('count').textContent = c;
   if (!c) $('count').textContent = '';
-  // a touch: buzz in the hand, flash red
-  if (s.touching && !lastTouching) { vibrate([70, 30, 70]); buzzT = performance.now(); }
+  // a touch: one pulse in the hand when it starts, the screen flashes red while it lasts
+  if (s.touching && !lastTouching) pulse();
   if (main.alert) { $('touches').classList.add('hit'); setTimeout(() => $('touches').classList.remove('hit'), 600); }
   $('flash').style.opacity = s.touching ? 1 : 0;
   lastTouching = !!s.touching;
-  if (lastLevel !== null && s.level !== lastLevel) vibrate([40, 60, 40, 60, 120]);   // level done
   // levels with the wand fixed in the robot's hand: no GRAB / RELEASE
   if (s.start_held !== grab.disabled) {
     grab.disabled = !!s.start_held;
@@ -79,8 +81,6 @@ function showStatus() {
   $('msg').textContent = msg;
   $('done').classList.toggle('hidden', !s.finished);
 }
-// keep buzzing while the wand stays on the wire
-setInterval(() => { if (lastTouching && performance.now() - buzzT > 250) { vibrate(60); buzzT = performance.now(); } }, 120);
 
 // ------------------------------------------------------------ buttons
 let moving = false, closed = false, epoch = 0, recenterReq = true;
@@ -96,7 +96,6 @@ function refreshMove() {
   moving = on;
   pad.classList.toggle('on', on);
   $('padT').innerHTML = on ? '<span>MOVING</span>' : '<span>HOLD<small>TO MOVE</small></span>';
-  vibrate(on ? 18 : 8);
 }
 function setMove(on) { touchHold = on; refreshMove(); }
 const onButton = (el) => !!(el && el.closest && el.closest('#grab, #recenter'));
@@ -120,8 +119,8 @@ function setClosed(c) {
   grab.classList.toggle('closed', closed);
   $('grabT').textContent = closed ? 'RELEASE' : 'GRAB';
 }
-grab.addEventListener('click', () => { setClosed(!closed); vibrate(closed ? [30, 40, 30] : 20); });
-$('recenter').addEventListener('click', () => { if (!touchMode) { recenterReq = true; vibrate(15); } });
+grab.addEventListener('click', () => { setClosed(!closed); pulse(); });
+$('recenter').addEventListener('click', () => { if (!touchMode) recenterReq = true; });
 
 // ------------------------------------------------------------ pose math
 // WebXR: Y up, -Z = where the phone's back camera looked when tracking started.
@@ -164,27 +163,22 @@ function matToQuatWXYZ(R) {
 }
 const XR_TO_MJ = [[0, 0, -1], [-1, 0, 0], [0, 1, 0]];      // MuJoCo vector = this x WebXR vector
 
-// Tracking lost (a fast move, a blank view): the position is held where it was last known, the
-// turning still follows (the gyroscope keeps working) and MOVE stays held, so the robot glides to
-// a stop instead of letting go. When tracking comes back, or the position jumps (the tracking
-// re-locating itself), the server re-anchors (a new epoch): the robot goes on from where it is.
+// Tracking lost (a fast move, a blank view): MOVE counts as released, the robot stops (as in the
+// screening test); holding the pad again once tracking is back takes a new anchor. If the
+// position jumps while tracked (the tracking re-locating itself), the server re-anchors too (a
+// new epoch): the robot goes on from where it is.
 const JUMP_M = 0.08;            // [m] more than this between two messages (~15 ms) is a jump, not a move
-let lastGood = null, wasLost = false;
+let lastGood = null;
 function resetTracking() { lastGood = null; epoch++; }
 function send(pose, tracked) {
   if (!wsOpen) return;
   if (ws.bufferedAmount > 4096) return;             // (the network is behind: skip, don't pile up delay)
   let right = null;
   if (pose) {
-    let p = pose.transform.position;
-    const o = pose.transform.orientation;
+    const p = pose.transform.position, o = pose.transform.orientation;
     if (tracked) {
-      if (wasLost) { wasLost = false; epoch++; }
       if (lastGood && Math.hypot(p.x - lastGood.x, p.y - lastGood.y, p.z - lastGood.z) > JUMP_M) epoch++;
       lastGood = { x: p.x, y: p.y, z: p.z };
-    } else {
-      wasLost = true;
-      if (lastGood) p = lastGood;
     }
     const yaw = yawOf([o.x, o.y, o.z, o.w]);
     if (recenterReq && tracked) { calYaw = yaw; recenterReq = false; epoch++; }
@@ -211,7 +205,7 @@ function send(pose, tracked) {
       const a = (yaw - calYaw + vy) / 2;
       q = [Math.cos(a), 0, 0, Math.sin(a)];
     }
-    right = { pose: [...mj, ...q], grip: moving && warmed && lastGood ? 1 : 0, stick: [0, closed ? 1 : -1], buttons: [],
+    right = { pose: [...mj, ...q], grip: moving && tracked && warmed ? 1 : 0, stick: [0, closed ? 1 : -1], buttons: [],
               epoch, tracked };
   }
   ws.send(JSON.stringify({ type: 'input', t: performance.now() / 1000, head: null, left: null, right }));
@@ -240,9 +234,8 @@ $('start').addEventListener('click', async () => {
   let session;
   try {
     session = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['local'], optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body } });
+      requiredFeatures: ['local'], optionalFeatures: ['dom-overlay'], domOverlay: { root: $('overlay') } });
   } catch (e) { $('err').textContent = 'Could not start tracking: ' + e.message; return; }
-  vibrate(30);
   setControls('motion');
   $('intro').classList.add('hidden');
   $('overlay').classList.remove('hidden');
@@ -280,14 +273,13 @@ $('start').addEventListener('click', async () => {
     if (!warmed) {
       warmMs = tracked ? warmMs + dt : 0;
       $('warmBar').style.width = `${Math.min(100, 100 * warmMs / WARM_MS)}%`;
-      if (warmMs >= WARM_MS) { warmed = true; recenterReq = true; $('warm').classList.add('hidden'); vibrate([30, 40, 60]); }
+      if (warmMs >= WARM_MS) { warmed = true; recenterReq = true; $('warm').classList.add('hidden'); }
     }
     if (tracked !== wasTracked) {
       wasTracked = tracked;
       $('trk').classList.toggle('ok', tracked);
       $('trkT').textContent = tracked ? 'Tracking' : 'Tracking lost';
       $('lost').classList.toggle('hidden', tracked || !warmed);
-      if (!tracked) vibrate([20, 40, 20]);
     }
     if (t - lastSend >= 15) { send(pose, tracked); lastSend = t; }     // ~60 messages a second
   };
@@ -333,7 +325,7 @@ function bindStick(id) {
   };
   el.addEventListener('pointerdown', (e) => {
     if (st.id !== null) return;
-    st.id = e.pointerId; el.setPointerCapture(e.pointerId); el.classList.add('on'); update(e); vibrate(10);
+    st.id = e.pointerId; el.setPointerCapture(e.pointerId); el.classList.add('on'); update(e);
   });
   el.addEventListener('pointermove', (e) => { if (e.pointerId === st.id) update(e); });
   const end = (e) => {
@@ -364,7 +356,6 @@ setInterval(() => {
 $('startTouch').addEventListener('click', () => {
   touchMode = true;
   setControls('touch');
-  vibrate(30);
   $('intro').classList.add('hidden');
   $('overlay').classList.remove('hidden');
   $('pad').classList.add('hidden');
