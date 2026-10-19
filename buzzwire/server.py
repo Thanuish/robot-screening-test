@@ -1,7 +1,7 @@
 """Robot Buzz Wire: the development server (one game, fixed addresses). The simulation runs here
 in real time; browsers only show it and send controller input.
 
-    python -m buzzwire.server [--port 8000] [--levels straight curves]
+    python -m buzzwire.server [--port 8000] [--game cubes] [--levels pick shapes]
 
     /            the games: a menu (Buzz Wire, Cube Tasks, Tower), the 3D view, the HUD, the QR code
     /phone       the Android phone controller (touch joysticks, or motion tracking)
@@ -32,7 +32,6 @@ from vrteleop.webscene import export_scene
 
 from . import config as C
 from .cubes import CubesGame
-from .game import BuzzWireGame
 from .tower import TowerGame
 from . import candidates as CAND
 from .session import Session
@@ -44,7 +43,6 @@ NOT_FOUND = ("<!doctype html><meta name=viewport content='width=device-width'><b
              "link in your invitation e-mail, or contact us.</p></div>")
 
 GAMES = {   # key: (class, title, one line for the menu)
-    "wire": (BuzzWireGame, "Buzz Wire", "Slide the ring along the wire without touching it."),
     "cubes": (CubesGame, "Cube Tasks", "Pick up cubes and shapes: into squares, outlines and bins."),
     "tower": (TowerGame, "Tower", "Stack blocks as high as you can without the tower falling."),
 }
@@ -136,7 +134,7 @@ class Server:
             self.new_game(args.game)
 
     def new_game(self, kind: str | None = None):
-        """Start a game (kind: wire, cubes, tower; None: the current one again)."""
+        """Start a game (kind: a key of GAMES; None: the current one again)."""
         kind = kind or self.kind
         if kind not in GAMES:
             return
@@ -340,7 +338,8 @@ class Server:
                                                              "Content-Encoding": "gzip"})
 
         async def config(_):
-            return web.json_response(dict(self.cfg.public(), phone_url=self.phone_url(),
+            return web.json_response(dict(self.cfg.public(), tasks=len(self.cfg.games["flow"]["assessment"]),
+                                          phone_url=self.phone_url(),
                                           iphone_url=self.phone_url("/iphone")))
 
         async def qr(request):

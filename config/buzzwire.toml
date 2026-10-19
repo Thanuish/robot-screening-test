@@ -234,13 +234,13 @@ blocks = [{ size = [0.10, 0.05, 0.04], color = "#e63946" },
 # =============================================================================================
 #  The candidate's test (one personal link): welcome -> connect the phone -> tutorial ->
 #  practice -> "ready?" (start the assessment, or practise again) -> assessment -> thank you.
-#  Tasks are "game:level" (games: wire, cubes, tower; levels: the keys above, or the phases of
+#  Tasks are "game:level" (games: cubes, tower; levels: the keys above, or the phases of
 #  config/screening.toml for cubes). During the assessment the screen shows only a thin timer.
 # =============================================================================================
 [flow]
-practice = ["wire:straight", "tower:practice"]          # after the tutorial; may be repeated
+practice = ["cubes:pick", "tower:practice"]             # after the tutorial; may be repeated
 max_practice_rounds = 3                                 # rounds of practice a candidate may do
-assessment = ["cubes:shapes", "cubes:sort", "wire:curves", "tower:cubes"]
+assessment = ["cubes:shapes", "cubes:sort", "tower:cubes"]
 card_seconds = 8                                        # the task card before each assessment task
 default_controls = "motion"     # a new candidate's controls (the admin can change them per candidate):
                                 # "motion" (move the phone: Android tracking / iPhone tilt), "touch"

@@ -321,26 +321,26 @@ def _color(c: _Checker, v, where):
 def _flow(c: _Checker, raw: dict, wire_levels: list, games: dict) -> dict:
     """[flow]: the candidate's test: practice tasks, how often, the assessment's tasks."""
     c.keys(raw, "flow", ("practice", "max_practice_rounds", "assessment", "card_seconds", "default_controls"))
-    known = {"wire": [lv.key for lv in wire_levels], "tower": [lv["key"] for lv in games["tower"]["levels"]],
+    known = {"tower": [lv["key"] for lv in games["tower"]["levels"]],
              "cubes": None}                       # (cubes: the phases of config/screening.toml, checked when used)
 
     def tasks(key, default):
         out = []
         for t in raw.get(key, default):
             if not isinstance(t, str) or ":" not in t:
-                c.err(f"flow.{key}", f"{t!r}: should be \"game:level\", e.g. \"wire:curves\"")
+                c.err(f"flow.{key}", f"{t!r}: should be \"game:level\", e.g. \"tower:cubes\"")
                 continue
             g, lv = t.split(":", 1)
             if g not in known:
-                c.err(f"flow.{key}", f"{t!r}: no game '{g}' (wire, cubes, tower)")
+                c.err(f"flow.{key}", f"{t!r}: no game '{g}' ({', '.join(known)})")
             elif known[g] is not None and lv not in known[g]:
                 c.err(f"flow.{key}", f"{t!r}: game '{g}' has no level '{lv}' ({', '.join(known[g])})")
             else:
                 out.append((g, lv))
         return out
-    return dict(practice=tasks("practice", ["wire:straight", "tower:practice"]),
+    return dict(practice=tasks("practice", ["cubes:pick", "tower:practice"]),
                 max_practice_rounds=c.num(raw, "max_practice_rounds", "flow", 3, lo=1, hi=20, integer=True),
-                assessment=tasks("assessment", ["cubes:shapes", "cubes:sort", "wire:curves", "tower:cubes"]),
+                assessment=tasks("assessment", ["cubes:shapes", "cubes:sort", "tower:cubes"]),
                 card_seconds=c.num(raw, "card_seconds", "flow", 8, lo=0, hi=60),
                 default_controls=c.text(raw, "default_controls", "flow", "motion", ("motion", "touch", "choice")))
 

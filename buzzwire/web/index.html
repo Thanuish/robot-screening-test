@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Robot Buzz Wire</title>
+  <title>Robot Games</title>
   <style>
     :root { --panel: rgba(12, 15, 21, .62); --line: rgba(255,255,255,.09); --text: #eef1f6; --dim: #9aa3b2;
       --accent: #36c2ff; --go: #2fdc7f; --bad: #ff3b4e; }
@@ -133,7 +133,7 @@
   <div id="sideBox" class="hidden"><span>SIDE VIEW</span></div>
   <div id="top">
     <div class="glass" id="timerBox"><div class="lab">Time left</div><div class="val" id="timer">0:00</div></div>
-    <div class="glass" id="banner"><div class="lab" id="lvlK">Level</div><div id="title">Robot Buzz Wire</div><div id="text"></div></div>
+    <div class="glass" id="banner"><div class="lab" id="lvlK">Level</div><div id="title">Robot Games</div><div id="text"></div></div>
     <div class="glass" id="touchBox"><div class="lab" id="mainLab">Touches</div><div class="val" id="touches">0</div><div id="more"></div></div>
   </div>
   <div class="glass" id="progWrap"><div class="ends"><span>START</span><span>FINISH</span></div><div id="prog"><div id="bar"></div></div></div>
@@ -172,7 +172,7 @@
     <div class="lab">Welcome</div><h1>Robot control assessment</h1>
     <p>You'll control a real robot arm (a simulation of it) from your phone and watch it on this screen. First a short
       tutorial and practice, then the assessment. It takes about 25 minutes.</p>
-    <div class="facts"><div><b>1. Tutorial</b>learn the controls</div><div><b>2. Practice</b>as often as you like (up to 3 rounds)</div><div><b>3. Assessment</b>4 short tasks</div></div>
+    <div class="facts"><div><b>1. Tutorial</b>learn the controls</div><div><b>2. Practice</b>as often as you like (up to 3 rounds)</div><div><b>3. Assessment</b><span id="wTasks">a few</span> short tasks</div></div>
     <p>You need this computer and your phone (iPhone or Android), both connected to the internet.</p>
     <label>Your name</label><input type="text" id="wName" autocomplete="name">
     <label class="chk"><input type="checkbox" id="wConsent"><span>I agree that my control of the robot is recorded and scored for my
@@ -188,7 +188,7 @@
   <div id="instr" class="glass hidden"><div class="lab">Tutorial</div><div id="instrT"></div></div>
   <div id="ready" class="cover hidden"><div class="glass card">
     <div class="lab">Practice done</div><h1>Ready for the assessment?</h1>
-    <p>The assessment has <b id="rTasks">4</b> short tasks. Each starts with a card that tells you what to do; while you play, the
+    <p>The assessment has <b id="rTasks">a few</b> short tasks. Each starts with a card that tells you what to do; while you play, the
       screen shows only the robot and a small timer. Your results aren't shown.</p>
     <p id="rRounds" style="color:var(--dim)"></p>
     <div class="btns"><button class="bigbtn ghost" id="rPractice">Practise again</button>

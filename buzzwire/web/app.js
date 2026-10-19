@@ -762,7 +762,10 @@ function candidateView(s) {
 if (CAND) {
   for (const id of ['menu', 'corner']) show(id, false);
   $('qr1').src = `/qr.svg?for=candidate&c=${CAND}`;
-  fetch('/config.json').then(r => r.json()).then(c => { if (c.phone_url) $('url1').textContent = c.phone_url.replace(/\/phone$/, `/p/${CAND}`); });
+  fetch('/config.json').then(r => r.json()).then(c => {
+    if (c.phone_url) $('url1').textContent = c.phone_url.replace(/\/phone$/, `/p/${CAND}`);
+    if (c.tasks) $('wTasks').textContent = $('rTasks').textContent = String(c.tasks);   // (the assessment's tasks)
+  });
   const check = () => { $('wStart').disabled = !($('wConsent').checked && $('wName').value.trim()); };
   $('wConsent').addEventListener('change', check); $('wName').addEventListener('input', check);
   $('wStart').onclick = () => { ensureAudio(); send({ type: 'begin', name: $('wName').value.trim() }); };

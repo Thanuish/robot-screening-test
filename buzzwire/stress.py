@@ -22,7 +22,7 @@ from .game import BuzzWireGame
 from .tower import TowerGame
 from .tutorial import TutorialGame
 
-GAMES = {"tutorial": TutorialGame, "cubes": CubesGame, "tower": TowerGame, "wire": BuzzWireGame}
+GAMES = {"tutorial": TutorialGame, "cubes": CubesGame, "tower": TowerGame, "wire": BuzzWireGame}   # (wire: no longer in the menu or the test)
 
 
 def run(kind: str, seed: int, seconds: float):
@@ -59,7 +59,7 @@ def run(kind: str, seed: int, seconds: float):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--game", choices=list(GAMES), nargs="*", default=list(GAMES))
+    ap.add_argument("--game", choices=list(GAMES), nargs="*", default=[k for k in GAMES if k != "wire"])
     ap.add_argument("--seeds", type=int, nargs="*", default=[0, 1, 2])
     ap.add_argument("--seconds", type=float, default=60.0)
     ap.add_argument("--limit-ms", type=float, default=50.0)
