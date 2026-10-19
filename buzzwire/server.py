@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import gzip
+import hashlib
 import io
 import json
 import time
@@ -124,6 +126,7 @@ class Server:
         self.session = None                   # a candidate's test (session.py); its game is shown instead
         self.view_yaw = 0.0
         self.controls = "touch"               # what the phone says it uses: motion, tilt, touch
+        self.assets: dict[str, bytes] = {}   # meshes by their fingerprint (gzipped JSON)
         self.jitter = Jitter(self.cfg.controls["jitter_buffer"], self.cfg.controls["jitter_buffer_max"])   # the phone's messages, played back evenly
         self.input_t = None                   # when the last controller message came
         self.stale = False                    # none for input_timeout_s: MOVE counts as released
@@ -168,8 +171,21 @@ class Server:
         return True
 
     def _export(self):
+        """The level's geometry for the browsers. The meshes (the robot's: the same every level) are
+        sent once each under their content's fingerprint (/asset/<key>, cached by the browser for
+        good); the scene itself only refers to them. The model's textures are left out (the game
+        page has its own materials). Was ~4.5 MB to every browser at every level change."""
         g = self.game
-        self.bodies, self.scene_gz = export_scene(g.m)
+        self.bodies, payload = export_scene(g.m, textures=False, compress=False)
+        refs = []
+        for mesh in payload["meshes"]:
+            raw = json.dumps(mesh).encode()
+            key = hashlib.blake2b(raw, digest_size=12).hexdigest()
+            if key not in self.assets:
+                self.assets[key] = gzip.compress(raw, 5)
+            refs.append({"ref": key})
+        payload["meshes"] = refs
+        self.scene_gz = gzip.compress(json.dumps(payload).encode(), 5)
         self.scene_id += 1
         self._level = (id(g), g.li, id(g.sc))
 
@@ -304,7 +320,7 @@ class Server:
         @web.middleware
         async def no_cache(request, handler):
             resp = await handler(request)
-            if "/vendor/" not in request.path and "/assets/" not in request.path:
+            if not request.path.startswith(("/vendor/", "/assets/", "/asset/")):
                 resp.headers["Cache-Control"] = "no-cache"
             return resp
         app.middlewares.append(no_cache)
@@ -445,6 +461,14 @@ class Server:
         app.router.add_post("/admin/candidates", local_only(admin_new))
         app.router.add_post("/admin/candidates/{code}/controls", local_only(admin_controls))
         app.router.add_get("/scene.json", scene)
+
+        async def asset(request):                    # a mesh, by its content's fingerprint: never changes
+            body = self.assets.get(request.match_info["key"])
+            if body is None:
+                raise web.HTTPNotFound()
+            return web.Response(body=body, headers={"Content-Type": "application/json", "Content-Encoding": "gzip",
+                                                    "Cache-Control": "public, max-age=31536000, immutable"})
+        app.router.add_get("/asset/{key}", asset)
         app.router.add_get("/config.json", config)
         app.router.add_get("/level.json", level)
         app.router.add_get("/qr.svg", qr)

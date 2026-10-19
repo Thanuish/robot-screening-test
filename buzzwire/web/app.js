@@ -248,8 +248,15 @@ function wand(L) {
   for (const m of [loop, stem, ferrule, handle, cap]) { m.castShadow = m.receiveShadow = true; g.add(m); }
   return g;
 }
+const meshAssets = new Map();
+function meshAsset(key) {
+  if (!meshAssets.has(key)) meshAssets.set(key, fetch('/asset/' + key).then(r => r.json()));
+  return meshAssets.get(key);
+}
 async function loadScene(id) {
   const [j, L] = await Promise.all([(await fetch('/scene.json?v=' + id)).json(), buildLevel()]);
+  // the meshes come by their fingerprint, each fetched once and then from the browser's cache
+  j.meshes = await Promise.all(j.meshes.map(m => m.ref ? meshAsset(m.ref) : m));
   if (simRoot) mj.remove(simRoot);
   simRoot = new THREE.Group();
   bodies = j.bodies.map((name) => {
