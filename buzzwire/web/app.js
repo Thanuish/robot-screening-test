@@ -254,7 +254,13 @@ function meshAsset(key) {
   return meshAssets.get(key);
 }
 async function loadScene(id) {
-  const [j, L] = await Promise.all([(await fetch('/scene.json?v=' + id)).json(), buildLevel()]);
+  let j, L;
+  try {
+    [j, L] = await Promise.all([(await fetch('/scene.json?v=' + id)).json(), buildLevel()]);
+  } catch (e) {                                   // (try again with the next update: never stay blank)
+    if (pendingScene === id) pendingScene = -1;
+    return;
+  }
   // the meshes come by their fingerprint, each fetched once and then from the browser's cache
   j.meshes = await Promise.all(j.meshes.map(m => m.ref ? meshAsset(m.ref) : m));
   if (simRoot) mj.remove(simRoot);

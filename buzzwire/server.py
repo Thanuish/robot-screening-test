@@ -127,6 +127,7 @@ class Server:
         self.view_yaw = 0.0
         self.controls = "touch"               # what the phone says it uses: motion, tilt, touch
         self.assets: dict[str, bytes] = {}   # meshes by their fingerprint (gzipped JSON)
+        self.bodies, self.scene_gz = [], gzip.compress(b'{"bodies": [], "geoms": [], "meshes": [], "materials": [], "textures": [], "flexes": []}')
         self.jitter = Jitter(self.cfg.controls["jitter_buffer"], self.cfg.controls["jitter_buffer_max"])   # the phone's messages, played back evenly
         self.input_t = None                   # when the last controller message came
         self.stale = False                    # none for input_timeout_s: MOVE counts as released
