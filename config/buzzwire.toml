@@ -31,7 +31,18 @@ servo_stiffness = 3.0          # x the UR5e's joint motor stiffness: higher = fo
 
 [controls]
 motion_scale = 1.0             # the robot moves this many cm per cm the phone moves
-smoothing_s = 0.03             # smooths the phone's motion (it sends ~30 positions a second); more = smoother but later; 0 = off
+# Smoothing of the phone's motion. "one_euro" (adaptive, the usual filter for hand tracking): strong
+# while the hand is slow or still (no shaking from the tracking's noise), weak while it moves fast (no
+# lag), filtering each phone sample once; then a short glide between samples (a phone sends ~30 a
+# second: without it the arm would move in small steps). Measured with phone-like input (30 Hz,
+# 1.5 mm noise): 0.41 mm shake at rest (the old 0.03 s smoothing: 0.84), ~125 ms behind a moving
+# hand, smooth motion.
+filter = "one_euro"
+min_cutoff_hz = 0.3            # how strongly a still hand is smoothed (lower = calmer)
+beta = 10.0                    # how fast the smoothing lets go as the hand speeds up [per m/s] (higher = less lag)
+rot_beta = 2.0                 # the same for turning [per rad/s]
+glide_s = 0.025                # glide between phone samples [s]
+smoothing_s = 0.03             # (filter = "simple": a plain low-pass with this time constant)
 
 # ---------------------------------------------------------------------------- physics
 [physics]

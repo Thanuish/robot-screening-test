@@ -52,34 +52,106 @@ def yaw_only(q):
     return out
 
 
+class OneEuro:
+    """The One Euro filter (Casiez, Roussel and Vogel, CHI 2012), the usual answer to "smooth but
+    no lag" for hand tracking: a low-pass filter whose cut-off rises with the speed. A still hand
+    is filtered strongly (no shaking from tracking noise); a fast one hardly at all (no lag).
+        cut-off [Hz] = min_cutoff + beta x speed  (the speed itself low-passed at d_cutoff)"""
+
+    def __init__(self, min_cutoff: float, beta: float, d_cutoff: float = 1.0):
+        self.min_cutoff, self.beta, self.d_cutoff = min_cutoff, beta, d_cutoff
+        self.x = None
+        self.speed = 0.0
+
+    @staticmethod
+    def _alpha(cutoff, dt):
+        tau = 1.0 / (2 * np.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def __call__(self, x, dt, distance=None):
+        """x: the new value (a vector); distance(a, b): how far apart two values are (default:
+        Euclidean); returns the alpha used (0..1: how far to move toward x)."""
+        if self.x is None:
+            self.x = x
+            return 1.0
+        d = float(np.linalg.norm(np.asarray(x) - np.asarray(self.x))) if distance is None else distance(self.x, x)
+        a_d = self._alpha(self.d_cutoff, dt)
+        self.speed += a_d * (d / dt - self.speed)
+        return self._alpha(self.min_cutoff + self.beta * abs(self.speed), dt)
+
+
 class Follower:
-    """The arm's goal: the teleop target, smoothed and speed-limited."""
+    """The arm's goal: the teleop target, smoothed and speed-limited.
+
+    Smoothing ([controls] filter): "one_euro" filters each new controller sample (a phone sends ~30
+    a second) with the One Euro filter, using the real time between samples; "simple" is a plain
+    low-pass with the time constant smoothing_s."""
 
     def __init__(self, cfg: Config):
-        self.tau = cfg.controls["smoothing"]
+        ct = cfg.controls
+        self.tau = ct["smoothing"]
+        self.euro = ct.get("filter") == "one_euro"
+        if self.euro:
+            self.f_pos = OneEuro(ct["min_cutoff_hz"], ct["beta"])
+            self.f_rot = OneEuro(ct["min_cutoff_hz"], ct["rot_beta"])
         self.vmax, self.wmax = cfg.robot["max_speed"], cfg.robot["max_turn"]
         self.s = self.g = None
+        self.raw = None                 # the last controller sample (one_euro: filtered once per sample)
+        self.since = 0.0                # time since that sample [s]
+        self.glide = ct.get("glide", 0.025)   # [s] glide between filtered samples
+        self.h = None
 
     def reset(self):
-        self.s = self.g = None
+        self.s = self.g = self.raw = self.h = None
+        self.since = 0.0
+        if self.euro:
+            self.f_pos.x = self.f_rot.x = None
+            self.f_pos.speed = self.f_rot.speed = 0.0
+
+    def _smooth(self, pos, quat, dt):
+        sp, sq = self.s
+        q1 = quat if np.dot(sq, quat) >= 0 else -quat
+        if not self.euro:
+            a = 1.0 if not self.tau else 1.0 - np.exp(-dt / self.tau)
+            sq = sq * (1 - a) + q1 * a
+            return sp + (pos - sp) * a, sq / np.linalg.norm(sq)
+        self.since += dt
+        if self.raw is not None and np.array_equal(pos, self.raw[0]) and np.array_equal(quat, self.raw[1]):
+            return self.s                                  # (no new sample: the filtered target holds)
+        sdt, self.since = max(self.since, 1e-3), 0.0
+        self.raw = (pos.copy(), quat.copy())
+        a = self.f_pos(pos, sdt)
+        ar = self.f_rot(q1, sdt, distance=lambda u, v: 2 * np.arccos(min(1.0, abs(float(np.dot(u, v))))))
+        sp = sp + (pos - sp) * a
+        sq = sq * (1 - ar) + q1 * ar
+        sq /= np.linalg.norm(sq)
+        self.f_pos.x, self.f_rot.x = sp, sq
+        return sp, sq
 
     def __call__(self, pos, quat, dt):
         pos, quat = np.asarray(pos, float), np.asarray(quat, float)
         if self.s is None:
             self.s = self.g = (pos.copy(), quat.copy())
+            self.raw = (pos.copy(), quat.copy())
+            if self.euro:
+                self.f_pos(pos, dt), self.f_rot(quat, dt)
             return self.g
-        sp, sq = self.s
-        a = 1.0 if not self.tau else 1.0 - np.exp(-dt / self.tau)
-        q1 = quat if np.dot(sq, quat) >= 0 else -quat
-        sp = sp + (pos - sp) * a
-        sq = sq * (1 - a) + q1 * a
-        self.s = (sp, sq / np.linalg.norm(sq))
+        self.s = self._smooth(pos, quat, dt)
+        if self.euro and self.glide:                       # glide between the filtered samples (no 30 Hz steps)
+            a = 1.0 - np.exp(-dt / self.glide)
+            hp, hq = self.h if self.h is not None else self.s
+            q1 = self.s[1] if np.dot(hq, self.s[1]) >= 0 else -self.s[1]
+            hq = hq * (1 - a) + q1 * a
+            self.h = (hp + (self.s[0] - hp) * a, hq / np.linalg.norm(hq))
+            target = self.h
+        else:
+            target = self.s
         gp, gq = self.g
-        step = self.s[0] - gp
+        step = target[0] - gp
         n = np.linalg.norm(step)
         if n > self.vmax * dt:
             step *= self.vmax * dt / n
-        q1 = self.s[1] if np.dot(gq, self.s[1]) >= 0 else -self.s[1]
+        q1 = target[1] if np.dot(gq, target[1]) >= 0 else -target[1]
         ang = 2 * np.arccos(min(1.0, abs(float(np.dot(gq, q1)))))
         if ang > self.wmax * dt:
             f = self.wmax * dt / ang
