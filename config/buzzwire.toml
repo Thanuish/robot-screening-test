@@ -208,3 +208,6 @@ practice = ["wire:straight", "tower:practice"]          # after the tutorial; ma
 max_practice_rounds = 3                                 # rounds of practice a candidate may do
 assessment = ["cubes:shapes", "cubes:sort", "wire:curves", "tower:cubes"]
 card_seconds = 8                                        # the task card before each assessment task
+default_controls = "motion"     # a new candidate's controls (the admin can change them per candidate):
+                                # "motion" (move the phone: Android tracking / iPhone tilt), "touch"
+                                # (two joysticks), "choice" (the candidate picks)

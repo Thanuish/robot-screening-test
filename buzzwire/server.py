@@ -321,6 +321,71 @@ class Server:
             raise web.HTTPFound(f"{page}?c={code}")
         app.router.add_get("/c/{code}", candidate_page)
         app.router.add_get("/p/{code}", phone_for)
+
+        async def controls_for(request):            # the phone asks which controls this candidate gets
+            code = request.match_info["code"].upper()
+            if CAND.get(code) is None:
+                raise web.HTTPNotFound()
+            return web.json_response({"controls": CAND.controls_of(code)})
+        app.router.add_get("/api/controls/{code}", controls_for)
+
+        # ---- admin: candidates, their controls, results (this PC only; a login comes with hosting)
+        def local_only(handler):
+            async def wrapped(request):
+                proxied = any(h in request.headers for h in ("cf-connecting-ip", "x-forwarded-for", "x-real-ip"))
+                if request.remote not in ("127.0.0.1", "::1") or proxied:
+                    return web.Response(status=403, text="The admin page opens only on the server PC.")
+                return await handler(request)
+            return wrapped
+
+        def admin_rows():
+            base = CAND.public_url()
+            rows = []
+            for code, c in CAND.load().items():
+                r = CAND.latest_results(code) or {}
+                sc = r.get("scores") or {}
+                rows.append(dict(code=code, name=c.get("name", ""), email=c.get("email", ""), status=c.get("status", ""),
+                                 controls=c.get("controls") or CAND.default_controls(), created=c.get("created"),
+                                 attempts=c.get("attempts", 0), link=f"{base}/c/{code}",
+                                 stage=r.get("stage"), overall=sc.get("overall"),
+                                 tasks={k: v for k, v in sc.items() if k != "overall"},
+                                 practice_rounds=len(r.get("practice") or []), device=r.get("device"),
+                                 controls_used=r.get("controls"), started=r.get("started"), finished=r.get("finished"),
+                                 running=self.session is not None and self.session.code == code))
+            return rows
+
+        async def admin_page(_):
+            return web.FileResponse(WEB / "admin.html", headers={"Cache-Control": "no-store"})
+
+        async def admin_api(_):
+            return web.json_response(dict(candidates=admin_rows(), controls=CAND.CONTROL_NAMES,
+                                          default_controls=CAND.default_controls(), public_url=CAND.public_url()))
+
+        async def admin_new(request):
+            body = await request.json()
+            name = str(body.get("name", "")).strip()[:80]
+            if not name:
+                raise web.HTTPBadRequest(text="a name is needed")
+            try:
+                code = CAND.add(name, str(body.get("email", "")).strip()[:120], body.get("controls") or None)
+            except ValueError as e:
+                raise web.HTTPBadRequest(text=str(e))
+            print(f"[admin] new candidate {code} {name} ({CAND.controls_of(code)})", flush=True)
+            return web.json_response({"code": code, "link": f"{CAND.public_url()}/c/{code}"})
+
+        async def admin_controls(request):
+            code = request.match_info["code"].upper()
+            mode = (await request.json()).get("controls")
+            if CAND.get(code) is None or mode not in CAND.CONTROLS:
+                raise web.HTTPBadRequest(text="unknown candidate or controls")
+            CAND.update(code, controls=mode)
+            print(f"[admin] {code}: controls {mode}", flush=True)
+            return web.json_response({"ok": True})
+
+        app.router.add_get("/admin", local_only(admin_page))
+        app.router.add_get("/admin/api", local_only(admin_api))
+        app.router.add_post("/admin/candidates", local_only(admin_new))
+        app.router.add_post("/admin/candidates/{code}/controls", local_only(admin_controls))
         app.router.add_get("/scene.json", scene)
         app.router.add_get("/config.json", config)
         app.router.add_get("/level.json", level)

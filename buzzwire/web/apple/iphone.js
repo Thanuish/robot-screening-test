@@ -210,3 +210,25 @@ $('goTilt').addEventListener('click', async () => {
   try { await enableTilt(); begin('tilt'); }
   catch (e) { $('err').textContent = e.message; }
 });
+
+// ------------------------------------------------------------ the controls the admin gave this candidate
+// /iphone?c=<code>: "motion" (only tilt steering: an iPhone can't track its position in a browser),
+// "touch" (only the joysticks), "choice" (both, tilt first)
+const candidate = new URLSearchParams(location.search).get('c');
+if (candidate) {
+  fetch(`/api/controls/${encodeURIComponent(candidate)}`).then(r => r.json()).then(({ controls }) => {
+    const hide = (el) => el && el.classList.add('hidden');
+    const fineAfter = (el) => el && el.nextElementSibling && el.nextElementSibling.classList.contains('fine') ? el.nextElementSibling : null;
+    if (controls === 'touch') {
+      hide($('goTilt')); hide(fineAfter($('goTilt')));
+      const b = $('goTouch'); b.textContent = 'Start'; b.style.marginTop = 'auto';
+      b.style.background = 'linear-gradient(135deg, #2fdc7f, #19a35b)'; b.style.border = '0'; b.style.fontSize = '18px'; b.style.padding = '19px';
+      hide(fineAfter(b));
+      const li = document.querySelectorAll('#intro .steps li');
+      if (li[2]) li[2].innerHTML = '<span class="num">3</span><span><b>Left stick</b>: move the gripper (forward = into the screen). <b>Right stick</b>: up / down and turn.</span>';
+      if (li[1]) li[1].innerHTML = '<span class="num">2</span><span>Tap <b>START</b>. Turn the sound on: the phone beeps when the robot touches something.</span>';
+    } else if (controls === 'motion') {
+      hide($('goTouch')); hide(fineAfter($('goTouch')));
+    }
+  }).catch(() => {});
+}

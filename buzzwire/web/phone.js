@@ -360,3 +360,28 @@ $('startTouch').addEventListener('click', () => {
     $('stRT').textContent = tiltOn ? 'TILT · TWIST' : 'UP / DOWN · TURN';
   });
 });
+
+// ------------------------------------------------------------ the controls the admin gave this candidate
+// /phone?c=<code>: "motion" (only START: move the phone; touch only if this phone can't track),
+// "touch" (only the joysticks), "choice" (both, motion first)
+const TOUCH_STEPS = `
+  <li><span class="num">1</span><span>Keep the game open on your <b>computer screen</b>.</span></li>
+  <li><span class="num">2</span><span>Tap <b>START</b> below.</span></li>
+  <li><span class="num">3</span><span><b>Left stick</b>: move the gripper (forward = into the screen). <b>Right stick</b>: up / down and turn.</span></li>
+  <li><span class="num">4</span><span><b>GRAB</b> closes the gripper, <b>RELEASE</b> opens it. Push the sticks gently for fine moves.</span></li>`;
+const candidate = new URLSearchParams(location.search).get('c');
+if (candidate) {
+  fetch(`/api/controls/${encodeURIComponent(candidate)}`).then(r => r.json()).then(async ({ controls }) => {
+    const hide = (el) => el && el.classList.add('hidden');
+    const fineAfter = (el) => el && el.nextElementSibling && el.nextElementSibling.classList.contains('fine') ? el.nextElementSibling : null;
+    if (controls === 'touch') {
+      hide($('start')); hide(fineAfter($('start'))); hide($('err'));
+      $('startTouch').textContent = 'Start'; $('startTouch').classList.add('primary'); hide($('startTouchFine'));
+      document.querySelector('#intro .steps').innerHTML = TOUCH_STEPS;
+    } else if (controls === 'motion') {
+      const err = await supported();
+      if (!err) { hide($('startTouch')); hide($('startTouchFine')); }
+      else $('err').textContent = 'This phone can\'t track motion, so you\'ll use touch controls: two joysticks on the screen.';
+    }
+  }).catch(() => {});
+}

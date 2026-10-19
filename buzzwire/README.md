@@ -8,17 +8,27 @@ blocks as high as you can).
 
 ## Sending the test to a candidate
 
+**The admin page**, `http://localhost:8000/admin` (it opens only on the server PC, e.g. through the
+SSH forward; a login comes with hosting): create a candidate (name, e-mail, **controls**), copy
+their link, change their controls, see their status, stage, scores, practice rounds, phone and the
+controls they actually used. The same from the command line:
+
 ```
-python -m buzzwire.candidates new "Jane Doe" jane@example.com      # prints her personal link
+python -m buzzwire.candidates new "Jane Doe" jane@example.com --controls touch   # prints her link
+python -m buzzwire.candidates controls <code> motion
 python -m buzzwire.candidates list
 ```
+
+**Controls per candidate** (the default: `[flow] default_controls`): **motion** (move the phone:
+Android phones are tracked by their camera, with a short warm-up; iPhones steer by tilting),
+**touch** (two joysticks, the same on every phone) or **choice** (the candidate picks). An
+Android phone that can't track motion falls back to touch; what was used is recorded.
 
 Put the link in the invitation e-mail. The candidate opens it **on their computer**:
 
 1. **Welcome**: name, consent.
 2. **Connect the phone**: one QR code; the phone's camera opens it, and the page picks the iPhone
-   or Android controller by itself (`/p/<code>`). Controls: two touch joysticks (the same for
-   everyone; left = move, right = up / down and turn) and GRAB / RELEASE.
+   or Android controller by itself (`/p/<code>`), with the controls set for this candidate.
 3. **Tutorial**: the controls one at a time, each checked before the next (move, up / down, turn,
    above the cube, lower, grab, put it down).
 4. **Practice**: a short buzz wire and a small tower, with hints.
@@ -98,7 +108,7 @@ config/buzzwire.toml   robot, controls, physics, view; Buzz Wire (board, wire, w
                        [cubes] (which tasks of config/screening.toml); [tower]; [flow] (the candidate's test)
 buzzwire/
   config.py      reads and checks the configuration
-  candidates.py  candidates and their personal links (data/buzzwire/candidates.json)
+  candidates.py  candidates, their personal links and controls (data/buzzwire/candidates.json)
   session.py     a candidate's test: welcome, tutorial, practice, ready, assessment, thank you
   tutorial.py    the interactive tutorial (steps checked one by one)
   base.py        what every game shares: controller input, teleop, IK, physics, clock, results, replay
@@ -112,4 +122,5 @@ buzzwire/
   server.py      the server: the game in real time, the web pages, the candidate's test
   web/           index.html + app.js: the screen; phone.html + phone.js: the Android controller
   web/apple/     index.html + iphone.js: the iPhone controller
+  web/admin.html the admin page (candidates, controls, results)
 ```
