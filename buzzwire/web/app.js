@@ -500,9 +500,14 @@ applyQuality();
 const DELAY_MIN = 0.03, DELAY_MAX = 0.15;
 let delay = DELAY_MIN, lates = [], delayT = performance.now();
 let snaps = [], clockOff = null, lastSim = -1;
+let paused = false;
 function addSnap(f) {
   const t = f[0], n = f[2];
   if (t < lastSim - 0.001) { snaps = []; clockOff = null; lates = []; }   // a new level: the clock restarts
+  // the simulation paused (a task card, a countdown): its clock stands still while the updates keep
+  // coming, which would look like ever later updates. Wait, then measure afresh when it moves again
+  if (t <= lastSim + 1e-6 && snaps.length) { paused = true; return; }
+  if (paused) { paused = false; clockOff = null; lates = []; delay = DELAY_MIN; }
   lastSim = t;
   const off = performance.now() / 1000 - t;                       // local clock - simulation clock
   clockOff = clockOff === null ? off : Math.min(off, clockOff + 0.002);   // lower envelope: the least-delayed packet
