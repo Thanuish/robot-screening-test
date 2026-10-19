@@ -65,8 +65,8 @@ touch_debounce_s = 0.05        # contact lost for less than this still counts as
 eye = [-0.25, -0.05, 1.65]     # camera position [x, y, z]: just behind the robot's base, at head height
 look_at = [0.50, 0.0, 0.75]    # the point it looks at: the middle of the work area (the board, the cubes)
 fov_deg = 50                   # (adjusted from the screening test's 55 so the work area fills the middle)
-arm_opacity = 0.25             # the arm's big links (shoulder, upper arm, forearm) see-through, so they
-                               # don't hide the work area (1 = solid); the wrist and gripper stay solid
+arm_opacity = 0.25             # the arm is drawn solid; its big links (base, shoulder, upper arm, forearm)
+                               # fade to this only while they hide the gripper or the spot below it
 
 [side_view]                    # a small second view in the top-right corner: the gripper from the side,
 enabled = true                 # at table height, so its height above the table is easy to see

@@ -59,19 +59,20 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 new RGBELoader().load('/assets/studio_small_08_1k.hdr', (hdr) => {
   hdr.mapping = THREE.EquirectangularReflectionMapping;
   scene.environment = pmrem.fromEquirectangular(hdr).texture;
-  scene.environmentIntensity = 0.75;
+  scene.environmentIntensity = 0.5;        // (less flat fill light: the shadows stay dark and clear)
   hdr.dispose();
 });
 // nearly straight above the table (like the ceiling lights): a shadow falls right below the
 // gripper and whatever it holds, the clearest cue for how high they are
-const key = new THREE.DirectionalLight(0xfff4e6, 2.6);
+const key = new THREE.DirectionalLight(0xfff4e6, 3.0);
 key.position.copy(toWorld([0.52, -0.08, 2.9]));
 key.target.position.copy(toWorld([0.45, 0, 0.8]));
 key.castShadow = true;
-Object.assign(key.shadow.camera, { left: -0.9, right: 0.9, top: 0.9, bottom: -0.9, near: 0.5, far: 5 });
-key.shadow.bias = -0.0002; key.shadow.normalBias = 0.01; key.shadow.radius = 4;
+// the shadow map covers just the bench (finer shadows), sharp-edged near contact
+Object.assign(key.shadow.camera, { left: -0.75, right: 0.75, top: 0.75, bottom: -0.75, near: 0.5, far: 5 });
+key.shadow.bias = -0.0002; key.shadow.normalBias = 0.008; key.shadow.radius = 2;
 scene.add(key, key.target);
-const fill = new THREE.HemisphereLight(0xcfe0ff, 0x2a2018, 0.35);
+const fill = new THREE.HemisphereLight(0xcfe0ff, 0x2a2018, 0.25);
 scene.add(fill);
 
 // ------------------------------------------------------------ materials and textures
@@ -256,27 +257,32 @@ async function loadScene(id) {
     if (name === 'wand') b.add(wand(L));
     return b;
   });
-  // the arm's big links see-through ([view] arm_opacity), so they don't hide the work area
-  const SEE_THROUGH = /^ur_(shoulder_link|upper_arm_link|forearm_link|base)$/;
-  const ghost = new Map();
-  const ghostOf = (m) => {
-    // (depth writing on: a link's own inside and far side stay hidden behind its near side)
-    if (!ghost.has(m)) { const c = m.clone(); c.transparent = true; c.opacity = cfg.view.arm_opacity ?? 1; c.depthWrite = true; ghost.set(m, c); }
-    return ghost.get(m);
-  };
+  // The arm is solid (shading and occlusion are strong depth cues). Its big links fade out
+  // smoothly only while they hide the gripper or the spot below it (updateLinks).
+  links = [];
+  const linkOf = new Map();
   for (const g of j.geoms) {
     if (SKIP.test(g.name) || g.type === 'plane') continue;
     const geo = geometry(g, j.meshes);
     if (!geo) continue;
-    let mat = materialFor(g, j.materials);
-    const seeThrough = SEE_THROUGH.test(j.bodies[g.body]) && (cfg.view.arm_opacity ?? 1) < 1;
-    if (seeThrough) mat = ghostOf(mat);
+    const mat = materialFor(g, j.materials);
+    const name = j.bodies[g.body];
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(...g.pos);
     mesh.quaternion.set(g.quat[1], g.quat[2], g.quat[3], g.quat[0]);
-    mesh.castShadow = !seeThrough; mesh.receiveShadow = true;
-    if (seeThrough) mesh.renderOrder = 2;
+    mesh.castShadow = mesh.receiveShadow = true;
     bodies[g.body].add(mesh);
+    if (FADING.test(name)) {
+      if (!linkOf.has(g.body)) {
+        const L = { body: bodies[g.body], box: new THREE.Box3(), meshes: [], solid: [], ghost: [], fade: 1 };
+        linkOf.set(g.body, L); links.push(L);
+      }
+      const L = linkOf.get(g.body), gm = mat.clone();
+      gm.transparent = true; gm.depthWrite = true;                // (its own inside stays hidden)
+      L.meshes.push(mesh); L.solid.push(mat); L.ghost.push(gm);
+      geo.computeBoundingBox();                                   // the link's box, in its own frame
+      L.box.union(geo.boundingBox.clone().applyMatrix4(new THREE.Matrix4().compose(mesh.position, mesh.quaternion, mesh.scale)));
+    }
   }
   mj.add(simRoot);
   gripBody = j.bodies.indexOf('ur_gripper_base');
@@ -284,6 +290,46 @@ async function loadScene(id) {
   sceneId = id;
   $('loading').style.opacity = 0;
   setTimeout(() => $('loading').classList.add('hidden'), 700);
+}
+
+// ------------------------------------------------------------ the arm: solid, faded only where it hides the gripper
+const FADING = /^ur_(base|shoulder_link|upper_arm_link|forearm_link)$/;   // the big links
+const FADED = cfg.view.arm_opacity ?? 0.25;           // a link's opacity while it hides the gripper
+let links = [];
+const AROUND = [[0.08, 0], [-0.08, 0], [0, 0.08], [0, -0.08]];
+const _ray = new THREE.Ray(), _inv = new THREE.Matrix4(), _hitP = new THREE.Vector3();
+const _r0 = new THREE.Vector3(), _r1 = new THREE.Vector3();
+function updateLinks() {
+  if (!links.length || gripBody < 0 || !bodies[gripBody]) return;
+  // rays from the camera to the gripper, to the spot on the table below it, halfway between, and
+  // to the table 8 cm around that spot (whatever the gripper is about to reach): a link any of them
+  // passes through fades; the others become solid again (smoothly)
+  padsPoint(_p);
+  const targets = [[_p.x, _p.y, _p.z], [_p.x, _p.y, TZ], [_p.x, _p.y, (_p.z + TZ) / 2]];
+  for (const [dx, dy] of AROUND) targets.push([_p.x + dx, _p.y + dy, TZ]);
+  // (each ray is tested against each link's box, in the link's frame: a few cheap tests a frame)
+  const hit = new Set();
+  camera.getWorldPosition(_r0);
+  for (const L of links) {
+    _inv.copy(L.body.matrixWorld).invert();
+    for (const t of targets) {
+      _r1.set(...t).applyMatrix4(mj.matrixWorld);
+      const far = _r0.distanceTo(_r1) - 0.03;
+      _ray.origin.copy(_r0).applyMatrix4(_inv);
+      _ray.direction.copy(_r1).applyMatrix4(_inv).sub(_ray.origin).normalize();
+      // (the link's frame has the same scale as the world: distances carry over)
+      if (_ray.intersectBox(L.box, _hitP) && _hitP.distanceTo(_ray.origin) < far) { hit.add(L); break; }
+    }
+  }
+  for (const L of links) {
+    L.fade += ((hit.has(L) ? FADED : 1) - L.fade) * 0.15;
+    const solid = L.fade > 0.98;
+    L.meshes.forEach((m, i) => {
+      m.material = solid ? L.solid[i] : L.ghost[i];
+      if (!solid) L.ghost[i].opacity = L.fade;
+      m.renderOrder = solid ? 0 : 2;
+    });
+  }
 }
 
 // ------------------------------------------------------------ depth cues: where the gripper would come down
@@ -352,6 +398,38 @@ function renderSide() {
   renderer.setViewport(x, innerHeight - y - h, w, h); renderer.setScissor(x, innerHeight - y - h, w, h);
   renderer.render(scene, sideCam);
   renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight);
+  drawScale(w, h, _q.z, padsPoint(_p).z - TZ);
+}
+// A centimetre scale on the side view's left edge and a marker at the finger pads' height. The side
+// camera looks level from a fixed distance, so at the gripper's distance a height maps straight to
+// a row of the picture: row = h/2 - (z - camera height) / (2 d tan(fov/2)) x h.
+const scaleCv = document.createElement('canvas'), scaleCx = scaleCv.getContext('2d');
+function drawScale(w, h, zCam, padH) {
+  const box = $('sideBox');
+  if (scaleCv.parentNode !== box) { box.appendChild(scaleCv); Object.assign(scaleCv.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' }); }
+  const r = Math.min(devicePixelRatio, 2);
+  if (scaleCv.width !== Math.round(w * r) || scaleCv.height !== Math.round(h * r)) { scaleCv.width = Math.round(w * r); scaleCv.height = Math.round(h * r); }
+  const c = scaleCx, span = 2 * SIDE.distance * Math.tan(SIDE.fov * Math.PI / 360);
+  const row = (hz) => (h / 2 - (TZ + hz - zCam) / span * h) * r;
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, scaleCv.width, scaleCv.height);
+  c.font = `${11 * r}px system-ui, sans-serif`; c.textBaseline = 'middle';
+  for (let cm = 0; cm <= 40; cm++) {
+    const yy = row(cm / 100);
+    if (yy < 22 * r || yy > scaleCv.height - 4 * r) continue;
+    const major = cm % 5 === 0;
+    c.fillStyle = major ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.45)';
+    c.fillRect(0, yy - 0.5 * r, (major ? 14 : 7) * r, r);
+    if (major) { c.fillStyle = 'rgba(255,255,255,0.9)'; c.fillText(`${cm}`, 17 * r, yy); }
+  }
+  if (padH > -0.01 && padH < 0.4) {                    // the finger pads' height, read off directly
+    const yy = row(padH), green = padH < CUES.grab_height;
+    c.fillStyle = green ? CUES.grab_color : CUES.color;
+    c.fillRect(0, yy - r, 30 * r, 2 * r);
+    const label = `${(Math.max(0, padH) * 100).toFixed(1)} cm`;
+    const tw = c.measureText(label).width + 8 * r;
+    c.fillStyle = 'rgba(8,10,14,0.7)'; c.fillRect(34 * r, yy - 9 * r, tw, 18 * r);
+    c.fillStyle = green ? CUES.grab_color : CUES.color; c.fillText(label, 38 * r, yy);
+  }
 }
 
 // ------------------------------------------------------------ post-processing and quality
@@ -387,7 +465,7 @@ function applyQuality() {
   }
   gtao.enabled = q.ao; bloom.enabled = q.bloom;
   useComposer = q.ao || q.bloom;
-  key.shadow.radius = quality === 'low' ? 2 : 4;
+  key.shadow.radius = 2;
   resize();
 }
 function resize() {
@@ -598,6 +676,7 @@ renderer.setAnimationLoop((now) => {
   camera.position.x += sx; camera.position.y += sy;
   applySnaps();
   updateCue();
+  updateLinks();
   renderer.shadowMap.needsUpdate = true;                 // (once per frame: the side view reuses it)
   if (useComposer) composer.render(); else renderer.render(scene, camera);
   renderSide();
