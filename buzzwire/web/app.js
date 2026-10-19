@@ -61,8 +61,10 @@ new RGBELoader().load('/assets/studio_small_08_1k.hdr', (hdr) => {
   scene.environmentIntensity = 0.75;
   hdr.dispose();
 });
+// nearly straight above the table (like the ceiling lights): a shadow falls right below the
+// gripper and whatever it holds, the clearest cue for how high they are
 const key = new THREE.DirectionalLight(0xfff4e6, 2.6);
-key.position.copy(toWorld([1.3, -0.9, 2.6]));
+key.position.copy(toWorld([0.52, -0.08, 2.9]));
 key.target.position.copy(toWorld([0.45, 0, 0.8]));
 key.castShadow = true;
 Object.assign(key.shadow.camera, { left: -0.9, right: 0.9, top: 0.9, bottom: -0.9, near: 0.5, far: 5 });
@@ -131,6 +133,22 @@ function box(w, d, h, mat, pos, radius = 0) {
   box(1.1, 1.5, 0.04, M.bench, [0.4, 0, 0.73], 0.006);
   for (const [sx, sy] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) box(0.045, 0.045, 0.71, M.alu, [0.4 + sx * 0.5, sy * 0.7, 0.355], 0.004);
   for (const sy of [-1, 1]) box(1.0, 0.03, 0.03, M.alu, [0.4, sy * 0.7, 0.15], 0.004);
+  // a faint 5 cm grid on the bench top: its lines shrink with distance, which shows depth
+  const W = 1.0, D = 1.4, PX = 2048, c = document.createElement('canvas');
+  c.width = Math.round(PX * W / D); c.height = PX;
+  const g = c.getContext('2d'), sx = c.width / W, sy = c.height / D;
+  for (let i = 0; i <= W / 0.05 + 1e-6; i++) {
+    const major = i % 5 === 0; g.fillStyle = major ? 'rgba(40,60,90,0.32)' : 'rgba(40,60,90,0.12)';
+    g.fillRect(Math.round(i * 0.05 * sx) - (major ? 2 : 1), 0, major ? 4 : 2, c.height);
+  }
+  for (let j = 0; j <= D / 0.05 + 1e-6; j++) {
+    const major = j % 5 === 0; g.fillStyle = major ? 'rgba(40,60,90,0.32)' : 'rgba(40,60,90,0.12)';
+    g.fillRect(0, Math.round(j * 0.05 * sy) - (major ? 2 : 1), c.width, major ? 4 : 2);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy(); tex.colorSpace = THREE.SRGBColorSpace;
+  const grid = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  grid.position.set(0.4, 0, 0.7505); grid.renderOrder = 1; mj.add(grid);
 }
 
 // ------------------------------------------------------------ the level (static: board, posts, wire)
@@ -276,8 +294,8 @@ async function loadScene(id) {
 const cue = new THREE.Group();
 const cueMat = new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.85, depthTest: false });
 const cueRing = new THREE.Mesh(new THREE.RingGeometry(0.018, 0.026, 40), cueMat);
-const cueLineGeo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
-const cueLine = new THREE.Line(cueLineGeo, new THREE.LineBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.6, depthTest: false }));
+const cueLine = new THREE.Mesh(new THREE.CylinderGeometry(0.0018, 0.0018, 1, 8).rotateX(Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.7, depthTest: false }));
 for (const o of [cueRing, cueLine]) { o.renderOrder = 10; o.frustumCulled = false; cue.add(o); }
 mj.add(cue);
 let gripBody = -1;
@@ -289,8 +307,7 @@ function updateCue() {
   const tz = 0.751, h = _p.z - tz;
   cue.visible = h > 0 && h < 0.6;
   cueRing.position.set(_p.x, _p.y, tz);
-  const a = cueLineGeo.attributes.position;
-  a.setXYZ(0, _p.x, _p.y, _p.z); a.setXYZ(1, _p.x, _p.y, tz); a.needsUpdate = true;
+  cueLine.position.set(_p.x, _p.y, (_p.z + tz) / 2); cueLine.scale.set(1, 1, Math.max(h, 1e-3));
   const c = h < 0.035 ? 0x4cd07d : 0xffd24a;
   cueMat.color.setHex(c); cueLine.material.color.setHex(c);
 }
@@ -311,7 +328,7 @@ const QUALITY = {
   high: { ratio: Math.min(devicePixelRatio, 2), shadow: 4096, ao: true, bloom: true },
   standard: { ratio: Math.min(devicePixelRatio, 1.25), shadow: 2048, ao: false, bloom: false },
   low: { ratio: 1, shadow: 1024, ao: false, bloom: false },
-  lite: { ratio: 1, shadow: 0, ao: false, bloom: false },     // no shadows at all: the lightest
+  lite: { ratio: 1, shadow: 1024, ao: false, bloom: false },  // the lightest; still shadows (the depth cue)
 };
 const forced = new URLSearchParams(location.search).get('q');
 let quality = QUALITY[forced] ? forced : 'lite';        // the lightest by default (?q=low / standard / high for more)

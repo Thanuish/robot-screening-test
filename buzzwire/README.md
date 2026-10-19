@@ -59,12 +59,18 @@ python -m TEST_TELEOP.lobby tunnel      # the public https address the phones an
 | `/phone` | Android controller: touch joysticks, or motion control (the camera tracks the phone) |
 | `/iphone` | iPhone controller (`web/apple/`): touch joysticks, or tilt steering (the gyroscope) |
 
-**View:** from behind and above the robot (`[view]`); the shoulder, upper arm and forearm are drawn
-see-through (`arm_opacity`) so they don't hide the work area, and a ring on the table below the
-gripper shows where it would come down (green: low enough to grab).
+**View:** from just behind the robot, over its right shoulder, at head height, close and wide
+(`[view]`). Drag to turn the view; double-click to reset it. The shoulder, upper arm and forearm
+are drawn see-through (`arm_opacity`) so they don't hide the work area.
 
-**Graphics:** physically based materials and HDRI lighting; presets **lite** (the default: no
-shadows), **low**, **standard**, **high** (`?q=...`); it steps down by itself below 45 fps. The
+**Depth cues** make height and distance readable on a flat screen:
+- **Shadows** fall straight down from a light above the table, on every quality setting.
+- **A faint 5 cm grid** on the table: its lines shrink with distance.
+- **A ring and a line** from the fingertips down to the table: green when low enough to grab.
+
+**Graphics:** physically based materials and HDRI lighting. Presets: **lite** (the default:
+small shadows, no effects), **low**, **standard**, **high** (`?q=...`). It steps down by itself
+below 45 fps. The
 robot's positions are interpolated, so motion is smooth at any frame rate. Assets:
 `web/assets/CREDITS.md` (CC0), three.js r170 in `web/vendor/` (MIT).
 
