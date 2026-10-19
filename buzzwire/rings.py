@@ -256,6 +256,7 @@ class RingsGame(RobotGame):
 
     def level_geometry(self) -> dict:
         return dict(kind="rings", level=self.level.key, r_mid=self.r_mid, tube=self.rc["thickness"] / 2,
+                    view=dict(eye=self.rc["view_eye"], look=self.rc["view_look"]),
                     rings=[dict(name=r["name"], rgba=r["rgba"]) for r in self.rc["rings"]])
 
 

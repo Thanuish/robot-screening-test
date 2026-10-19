@@ -234,13 +234,13 @@ blocks = [{ size = [0.10, 0.05, 0.04], color = "#e63946" },
 # =============================================================================================
 #  The candidate's test (one personal link): welcome -> connect the phone -> tutorial ->
 #  practice -> "ready?" (start the assessment, or practise again) -> assessment -> thank you.
-#  Tasks are "game:level" (games: cubes, tower; levels: the keys above, or the phases of
+#  Tasks are "game:level" (games: cubes, tower, rings; levels: the keys above, or the phases of
 #  config/screening.toml for cubes). During the assessment the screen shows only a thin timer.
 # =============================================================================================
 [flow]
-practice = ["cubes:pick", "tower:practice"]             # after the tutorial; may be repeated
+practice = ["cubes:pick", "tower:practice", "rings:practice"]   # after the tutorial; may be repeated
 max_practice_rounds = 3                                 # rounds of practice a candidate may do
-assessment = ["cubes:shapes", "cubes:sort", "tower:cubes"]
+assessment = ["cubes:shapes", "cubes:sort", "tower:cubes", "rings:rings"]
 card_seconds = 8                                        # the task card before each assessment task
 default_controls = "motion"     # a new candidate's controls (the admin can change them per candidate):
                                 # "motion" (move the phone: Android tracking / iPhone tilt), "touch"
@@ -276,8 +276,12 @@ on_peg_margin = 0.006                  # on its peg: the ring's centre within (h
 rest_speed = 0.03                      # [m/s] a ring hanging slower than this is done
 check_hz = 20                          # the rules are checked this often
 rotation = "full"                      # the gripper tilts and twists with the phone
+# this game's camera (the rings stand to the robot's left): from behind the robot, a little to its
+# left, looking at the middle of the three columns, so none of them sits behind the arm
+view_eye = [-0.30, 0.25, 1.65]
+view_look_at = [0.55, 0.27, 0.76]
 
-# One ring per entry, left to right as the candidate sees them. ring = the ring and its holder
+# One ring per entry, from the arm's side outward. ring = the ring and its holder
 # [x, y]; peg = [x, y]; peg_height = the post's height (the peg leaves its top; 0 = no post, the
 # peg starts 8 mm above the table); peg_tilt_deg from straight up, toward peg_yaw_deg (180 =
 # pointing back toward the robot). The most tilted peg on the arm's own side, the nearly level one

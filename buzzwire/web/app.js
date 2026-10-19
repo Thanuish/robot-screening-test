@@ -215,9 +215,19 @@ function geometry(g, meshes) {
   return null;
 }
 const matCache = new Map();
+const RING_SEG = /^ring_(\d+)_(\d+)$/;
+const plastics = new Map();
+function plasticOf(rgba) {                    // glossy painted plastic (the rings and their pegs)
+  const key = rgba.map(x => x.toFixed(3)).join(',');
+  if (!plastics.has(key)) plastics.set(key, new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(rgba[0], rgba[1], rgba[2]).convertSRGBToLinear(), roughness: 0.28, clearcoat: 0.8, clearcoatRoughness: 0.12 }));
+  return plastics.get(key);
+}
 function materialFor(g, mats) {
   const name = g.mat >= 0 ? mats[g.mat].name : '';
   if (ROBOT[name]) return ROBOT[name];
+  if (name === 'metal') return M.alu;                    // posts and plates: brushed light-grey metal
+  if (/^peg_\d+$/.test(g.name)) return plasticOf(g.rgba);
   if (g.name.startsWith('fork_')) return M.rubberBlack;
   if (name === 'wood' || name === 'screen_wood' || g.name === 'tower_platform') return M.wood;
   const rgba = g.mat >= 0 ? mats[g.mat].rgba : g.rgba;
@@ -248,6 +258,7 @@ function wand(L) {
   for (const m of [loop, stem, ferrule, handle, cap]) { m.castShadow = m.receiveShadow = true; g.add(m); }
   return g;
 }
+let viewOf = null;                         // the game whose own camera is in use (null: [view])
 const meshAssets = new Map();
 function meshAsset(key) {
   if (!meshAssets.has(key)) meshAssets.set(key, fetch('/asset/' + key).then(r => r.json()));
@@ -263,6 +274,11 @@ async function loadScene(id) {
   }
   // the meshes come by their fingerprint, each fetched once and then from the browser's cache
   j.meshes = await Promise.all(j.meshes.map(m => m.ref ? meshAsset(m.ref) : m));
+  // a game may bring its own camera ([rings] view_eye / view_look_at); the others use [view]
+  const v = L.view || cfg.view;
+  home.pos.copy(toWorld(v.eye)); home.target.copy(toWorld(v.look));
+  if (L.view || viewOf !== null) { camera.position.copy(home.pos); controls.target.copy(home.target); controls.update(); }
+  viewOf = L.view ? L.kind : null;
   if (simRoot) mj.remove(simRoot);
   simRoot = new THREE.Group();
   bodies = j.bodies.map((name) => {
@@ -276,6 +292,15 @@ async function loadScene(id) {
   const linkOf = new Map();
   for (const g of j.geoms) {
     if (SKIP.test(g.name) || g.type === 'plane') continue;
+    const seg = RING_SEG.exec(g.name);
+    if (seg) {                                           // a ring: drawn once, as a smooth torus
+      if (seg[2] === '0' && L.kind === 'rings') {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(L.r_mid, L.tube, 20, 72), plasticOf(g.rgba));
+        ring.castShadow = ring.receiveShadow = true;
+        bodies[g.body].add(ring);
+      }
+      continue;
+    }
     const geo = geometry(g, j.meshes);
     if (!geo) continue;
     const mat = materialFor(g, j.materials);
@@ -581,6 +606,7 @@ let lastMsg = '', toastT = 0, lastCount = '';
 const GAME_ICONS = {
   wire: '<svg viewBox="0 0 64 64" fill="none"><path d="M4 40 C 16 16, 26 16, 34 34 S 52 52, 60 24" stroke="#36c2ff" stroke-width="4" stroke-linecap="round"/><ellipse cx="34" cy="34" rx="8" ry="11" stroke="#ffd27a" stroke-width="4"/><path d="M34 45v14" stroke="#e9ecf1" stroke-width="5" stroke-linecap="round"/></svg>',
   cubes: '<svg viewBox="0 0 64 64" fill="none"><rect x="8" y="30" width="18" height="18" rx="3" fill="#f4a261"/><rect x="34" y="14" width="22" height="22" rx="3" stroke="#2fdc7f" stroke-width="3" stroke-dasharray="5 4"/><rect x="38" y="40" width="16" height="16" rx="3" fill="#457b9d"/><path d="M20 26 C 24 12, 34 10, 40 14" stroke="#e9ecf1" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 5"/></svg>',
+  rings: '<svg viewBox="0 0 64 64" fill="none"><path d="M14 56V40M32 56V34M50 56V28" stroke="#c7cbd1" stroke-width="4" stroke-linecap="round"/><path d="M14 40l-6-12M32 34l-4-14M50 28l-2-16" stroke-width="4" stroke-linecap="round" stroke="#e9ecf1"/><ellipse cx="11" cy="34" rx="7" ry="4" stroke="#db2921" stroke-width="3.5" transform="rotate(-60 11 34)"/><ellipse cx="30" cy="27" rx="7" ry="4" stroke="#266be6" stroke-width="3.5" transform="rotate(-75 30 27)"/><ellipse cx="49" cy="20" rx="7" ry="4" stroke="#24b34d" stroke-width="3.5" transform="rotate(-85 49 20)"/></svg>',
   tower: '<svg viewBox="0 0 64 64" fill="none"><rect x="14" y="52" width="36" height="6" rx="2" fill="#9c6b3d"/><rect x="22" y="40" width="20" height="12" rx="2" fill="#e63946"/><rect x="18" y="30" width="28" height="10" rx="2" fill="#e9c46a"/><rect x="24" y="18" width="16" height="12" rx="2" fill="#2a9d8f"/><rect x="26" y="6" width="12" height="12" rx="2" fill="#8e5bd8"/></svg>',
 };
 let menuBuilt = false, inMenu = null;

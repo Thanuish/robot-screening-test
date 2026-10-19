@@ -22,10 +22,11 @@ import numpy as np
 from .config import Config
 from .cubes import CubesGame
 from .tower import TowerGame
+from .rings import RingsGame
 from .tutorial import TutorialGame
 
-GAME_CLASSES = {"cubes": CubesGame, "tower": TowerGame}
-GAME_NAMES = {"cubes": "Cube Tasks", "tower": "Tower"}
+GAME_CLASSES = {"cubes": CubesGame, "tower": TowerGame, "rings": RingsGame}
+GAME_NAMES = {"cubes": "Cube Tasks", "tower": "Tower", "rings": "Ring on pegs"}
 
 
 class Session:

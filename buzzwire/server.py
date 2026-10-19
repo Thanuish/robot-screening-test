@@ -33,6 +33,7 @@ from vrteleop.webscene import export_scene
 from . import config as C
 from .cubes import CubesGame
 from .tower import TowerGame
+from .rings import RingsGame
 from . import candidates as CAND
 from .session import Session
 from .jitter import Jitter
@@ -45,6 +46,7 @@ NOT_FOUND = ("<!doctype html><meta name=viewport content='width=device-width'><b
 GAMES = {   # key: (class, title, one line for the menu)
     "cubes": (CubesGame, "Cube Tasks", "Pick up cubes and shapes: into squares, outlines and bins."),
     "tower": (TowerGame, "Tower", "Stack blocks as high as you can without the tower falling."),
+    "rings": (RingsGame, "Ring on pegs", "Tilt each ring onto the leaning peg of its colour, round after round."),
 }
 
 ROOT = Path(__file__).resolve().parents[1]

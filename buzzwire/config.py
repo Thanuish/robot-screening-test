@@ -392,7 +392,8 @@ def _rings(c: _Checker, raw: dict, robot: dict) -> dict:
     w = "rings"
     c.keys(raw, w, ("outer_diameter", "thickness", "segments", "mass", "friction", "holder_post", "holder_spacing",
                     "holder_base", "peg_radius", "peg_length", "peg_friction", "peg_plate", "held_lift",
-                    "held_distance", "on_peg_margin", "rest_speed", "check_hz", "rotation", "rings", "levels"))
+                    "held_distance", "on_peg_margin", "rest_speed", "check_hz", "rotation", "view_eye", "view_look_at",
+                    "rings", "levels"))
     out = dict(outer_diameter=c.num(raw, "outer_diameter", w, 0.10, lo=0.04, hi=0.3),
                thickness=c.num(raw, "thickness", w, 0.014, lo=0.004, hi=0.05),
                segments=c.num(raw, "segments", w, 28, lo=8, hi=96, integer=True),
@@ -410,7 +411,9 @@ def _rings(c: _Checker, raw: dict, robot: dict) -> dict:
                on_peg_margin=c.num(raw, "on_peg_margin", w, 0.006, lo=0.0, hi=0.05),
                rest_speed=c.num(raw, "rest_speed", w, 0.03, lo=0.001, hi=1.0),
                check_hz=c.num(raw, "check_hz", w, 20, lo=1, hi=100),
-               rotation=c.text(raw, "rotation", w, "full", ("none", "yaw", "full")), rings=[], levels=[])
+               rotation=c.text(raw, "rotation", w, "full", ("none", "yaw", "full")),
+               view_eye=c.vec(raw, "view_eye", w, 3, [-0.30, 0.25, 1.65]),
+               view_look=c.vec(raw, "view_look_at", w, 3, [0.55, 0.27, 0.76]), rings=[], levels=[])
     r_mid = out["outer_diameter"] / 2 - out["thickness"] / 2
     hole = r_mid - out["thickness"] / 2
     if hole <= out["peg_radius"] + 0.005:
