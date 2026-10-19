@@ -28,6 +28,7 @@ const cfg = await (await fetch('/config.json')).json();
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.autoUpdate = false;                   // (updated once per frame in the frame loop)
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
@@ -133,18 +134,13 @@ function box(w, d, h, mat, pos, radius = 0) {
   box(1.1, 1.5, 0.04, M.bench, [0.4, 0, 0.73], 0.006);
   for (const [sx, sy] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) box(0.045, 0.045, 0.71, M.alu, [0.4 + sx * 0.5, sy * 0.7, 0.355], 0.004);
   for (const sy of [-1, 1]) box(1.0, 0.03, 0.03, M.alu, [0.4, sy * 0.7, 0.15], 0.004);
-  // a faint 5 cm grid on the bench top: its lines shrink with distance, which shows depth
+  // a faint 10 cm grid on the bench top: its lines shrink with distance, which shows depth
   const W = 1.0, D = 1.4, PX = 2048, c = document.createElement('canvas');
   c.width = Math.round(PX * W / D); c.height = PX;
   const g = c.getContext('2d'), sx = c.width / W, sy = c.height / D;
-  for (let i = 0; i <= W / 0.05 + 1e-6; i++) {
-    const major = i % 5 === 0; g.fillStyle = major ? 'rgba(40,60,90,0.32)' : 'rgba(40,60,90,0.12)';
-    g.fillRect(Math.round(i * 0.05 * sx) - (major ? 2 : 1), 0, major ? 4 : 2, c.height);
-  }
-  for (let j = 0; j <= D / 0.05 + 1e-6; j++) {
-    const major = j % 5 === 0; g.fillStyle = major ? 'rgba(40,60,90,0.32)' : 'rgba(40,60,90,0.12)';
-    g.fillRect(0, Math.round(j * 0.05 * sy) - (major ? 2 : 1), c.width, major ? 4 : 2);
-  }
+  g.fillStyle = 'rgba(40,60,90,0.18)';
+  for (let i = 0; i <= W / 0.1 + 1e-6; i++) g.fillRect(Math.round(i * 0.1 * sx) - 1, 0, 3, c.height);
+  for (let j = 0; j <= D / 0.1 + 1e-6; j++) g.fillRect(0, Math.round(j * 0.1 * sy) - 1, c.width, 3);
   const tex = new THREE.CanvasTexture(c);
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy(); tex.colorSpace = THREE.SRGBColorSpace;
   const grid = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
@@ -264,7 +260,8 @@ async function loadScene(id) {
   const SEE_THROUGH = /^ur_(shoulder_link|upper_arm_link|forearm_link|base)$/;
   const ghost = new Map();
   const ghostOf = (m) => {
-    if (!ghost.has(m)) { const c = m.clone(); c.transparent = true; c.opacity = cfg.view.arm_opacity ?? 1; c.depthWrite = false; ghost.set(m, c); }
+    // (depth writing on: a link's own inside and far side stay hidden behind its near side)
+    if (!ghost.has(m)) { const c = m.clone(); c.transparent = true; c.opacity = cfg.view.arm_opacity ?? 1; c.depthWrite = true; ghost.set(m, c); }
     return ghost.get(m);
   };
   for (const g of j.geoms) {
@@ -283,33 +280,78 @@ async function loadScene(id) {
   }
   mj.add(simRoot);
   gripBody = j.bodies.indexOf('ur_gripper_base');
+  pads = [j.bodies.indexOf('ur_gripper_right_pad'), j.bodies.indexOf('ur_gripper_left_pad')];
   sceneId = id;
   $('loading').style.opacity = 0;
   setTimeout(() => $('loading').classList.add('hidden'), 700);
 }
 
-// ------------------------------------------------------------ depth cue: where the gripper would come down
-// A ring on the table straight below the gripper's fingertips and a thin line down to it; green when
-// the fingers are low enough to grab (no shadows are needed to judge the height).
+// ------------------------------------------------------------ depth cues: where the gripper would come down
+// As in the screening test ([depth_cues]): a ring and a dot on the table straight below the point
+// between the finger pads, and a line down to it; green when the pads are low enough to grab.
+const CUES = cfg.view.cues, TZ = 0.75;
+const CUE_C = new THREE.Color(CUES.color).getHex(), GRAB_C = new THREE.Color(CUES.grab_color).getHex();
 const cue = new THREE.Group();
-const cueMat = new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.85, depthTest: false });
-const cueRing = new THREE.Mesh(new THREE.RingGeometry(0.018, 0.026, 40), cueMat);
-const cueLine = new THREE.Mesh(new THREE.CylinderGeometry(0.0018, 0.0018, 1, 8).rotateX(Math.PI / 2),
-  new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.7, depthTest: false }));
-for (const o of [cueRing, cueLine]) { o.renderOrder = 10; o.frustumCulled = false; cue.add(o); }
+const cueMat = (opacity) => new THREE.MeshBasicMaterial({ color: CUE_C, transparent: true, opacity, depthTest: false, depthWrite: false });
+const cueRing = new THREE.Mesh(new THREE.RingGeometry(0.02, 0.028, 48), cueMat(0.9));
+const cueDot = new THREE.Mesh(new THREE.CircleGeometry(0.005, 20), cueMat(0.9));
+const cueLine = new THREE.Mesh(new THREE.CylinderGeometry(0.0015, 0.0015, 1, 8).rotateX(Math.PI / 2), cueMat(0.7));
+for (const o of [cueRing, cueDot, cueLine]) { o.renderOrder = 10; o.frustumCulled = false; cue.add(o); }
 mj.add(cue);
-let gripBody = -1;
-const _p = new THREE.Vector3(), _ofs = new THREE.Vector3();
-function updateCue() {
-  if (gripBody < 0 || !bodies[gripBody]) { cue.visible = false; return; }
+let gripBody = -1, pads = [-1, -1], cueColour = null;
+const _p = new THREE.Vector3(), _q = new THREE.Vector3(), _ofs = new THREE.Vector3();
+function padsPoint(out) {              // between the finger pads (or 14.5 cm out from the gripper base)
+  if (pads[0] >= 0 && pads[1] >= 0 && bodies[pads[0]] && bodies[pads[1]])
+    return out.copy(bodies[pads[0]].position).add(bodies[pads[1]].position).multiplyScalar(0.5);
   const b = bodies[gripBody];
-  _p.copy(b.position).add(_ofs.set(0, 0, 0.145).applyQuaternion(b.quaternion));   // the fingertips (14.5 cm from the gripper base)
-  const tz = 0.751, h = _p.z - tz;
-  cue.visible = h > 0 && h < 0.6;
-  cueRing.position.set(_p.x, _p.y, tz);
-  cueLine.position.set(_p.x, _p.y, (_p.z + tz) / 2); cueLine.scale.set(1, 1, Math.max(h, 1e-3));
-  const c = h < 0.035 ? 0x4cd07d : 0xffd24a;
-  cueMat.color.setHex(c); cueLine.material.color.setHex(c);
+  return out.copy(b.position).add(_ofs.set(0, 0, 0.145).applyQuaternion(b.quaternion));
+}
+function updateCue() {
+  if (!CUES.enabled || gripBody < 0 || !bodies[gripBody]) { cue.visible = false; return; }
+  padsPoint(_p);
+  const h = _p.z - TZ;
+  cue.visible = h > -0.01 && h < 0.6;
+  cueRing.position.set(_p.x, _p.y, TZ + 0.0015);
+  cueDot.position.set(_p.x, _p.y, TZ + 0.0016);
+  cueLine.position.set(_p.x, _p.y, (_p.z + TZ) / 2); cueLine.scale.set(1, 1, Math.max(h, 1e-3));
+  const c = h < CUES.grab_height ? GRAB_C : CUE_C;
+  if (c !== cueColour) { for (const o of [cueRing, cueDot, cueLine]) o.material.color.setHex(c); cueColour = c; }
+}
+
+// ------------------------------------------------------------ the side view ([side_view])
+// A small second view in the top-right corner: the gripper from the robot's side at table height,
+// following it smoothly, so its height above the table and the things below it are easy to see.
+// Its near plane is 15 cm short of the gripper: whatever is between the camera and the gripper
+// (the arm, a post) is cut away.
+const SIDE = cfg.view.side;
+const sideCam = new THREE.PerspectiveCamera(SIDE.fov, 1.6, Math.max(0.02, SIDE.distance - 0.15), 10);
+const sideAim = new THREE.Vector3(), sideRect = { x: 0, y: 0, w: 0, h: 0 };
+let sideAimSet = false;
+function placeSide() {                 // the corner's place: under the top bar, at the right
+  const w = Math.round(innerWidth * SIDE.size), h = Math.round(w * 0.62);
+  const top = $('top'), tb = top && !top.classList.contains('hidden') ? top.getBoundingClientRect() : null;
+  Object.assign(sideRect, { x: innerWidth - w - 16, y: tb && tb.bottom > 0 ? Math.round(tb.bottom + 10) : 16, w, h });
+  const el = $('sideBox');
+  Object.assign(el.style, { left: `${sideRect.x}px`, top: `${sideRect.y}px`, width: `${w}px`, height: `${h}px` });
+  sideCam.aspect = w / h; sideCam.updateProjectionMatrix();
+}
+function sideOn() { return SIDE.enabled && gripBody >= 0 && !!bodies[gripBody] && !inMenu; }
+function renderSide() {
+  const on = sideOn();
+  $('sideBox').classList.toggle('hidden', !on);
+  if (!on) { sideAimSet = false; return; }
+  padsPoint(_q);
+  _q.z = TZ + SIDE.height;
+  if (!sideAimSet) { sideAim.copy(_q); sideAimSet = true; } else sideAim.lerp(_q, 0.12);
+  const s = SIDE.side === 'right' ? -1 : 1;              // the robot's left: +y in MuJoCo
+  sideCam.position.copy(toWorld([sideAim.x, sideAim.y + s * SIDE.distance, sideAim.z]));
+  sideCam.lookAt(toWorld([sideAim.x, sideAim.y, sideAim.z]));
+  placeSide();
+  const { x, y, w, h } = sideRect;
+  renderer.setScissorTest(true);
+  renderer.setViewport(x, innerHeight - y - h, w, h); renderer.setScissor(x, innerHeight - y - h, w, h);
+  renderer.render(scene, sideCam);
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight);
 }
 
 // ------------------------------------------------------------ post-processing and quality
@@ -395,7 +437,7 @@ let ws, status = {};
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   ws.binaryType = 'arraybuffer';
-  ws.onopen = () => { if (CAND) ws.send(JSON.stringify({ type: 'join', code: CAND })); };
+  ws.onopen = () => { sentYaw = null; if (CAND) ws.send(JSON.stringify({ type: 'join', code: CAND })); };   // (a new connection: send the view's heading again)
   ws.onclose = () => setTimeout(connect, 1000);
   ws.onmessage = (ev) => {
     if (typeof ev.data === 'string') {
@@ -411,7 +453,7 @@ function connect() {
   };
 }
 connect();
-const send = (m) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
+const send = (m) => { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(m)); return true; } return false; };
 $('restart').onclick = () => { send({ type: 'restart' }); $('restart').blur(); };
 $('toMenu').onclick = () => { send({ type: 'menu' }); $('toMenu').blur(); };
 $('doneMenu').onclick = () => send({ type: 'menu' });
@@ -532,7 +574,8 @@ function viewYaw() {                     // the camera's heading in MuJoCo's fra
 }
 setInterval(() => {
   const y = viewYaw();
-  if (sentYaw === null || Math.abs(y - sentYaw) > 0.01) { send({ type: 'view', yaw: y }); sentYaw = y; }
+  // (only counted as sent once it really went out: the first try can come before the connection is open)
+  if ((sentYaw === null || Math.abs(y - sentYaw) > 0.01) && send({ type: 'view', yaw: y })) sentYaw = y;
 }, 200);
 
 // ------------------------------------------------------------ frame loop, frame rate, auto quality
@@ -549,7 +592,9 @@ renderer.setAnimationLoop((now) => {
   camera.position.x += sx; camera.position.y += sy;
   applySnaps();
   updateCue();
+  renderer.shadowMap.needsUpdate = true;                 // (once per frame: the side view reuses it)
   if (useComposer) composer.render(); else renderer.render(scene, camera);
+  renderSide();
   camera.position.x -= sx; camera.position.y -= sy;
   frames++;
   if (now - fpsT > 2000) {

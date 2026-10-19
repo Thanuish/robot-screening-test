@@ -150,7 +150,7 @@ def load(p=None) -> Config:
 
 def parse(raw: dict, p="<config>") -> Config:
     c = _Checker()
-    c.keys(raw, "file", ("version", "robot", "controls", "physics", "view", "board", "wire", "wand",
+    c.keys(raw, "file", ("version", "robot", "controls", "physics", "view", "side_view", "depth_cues", "board", "wire", "wand",
                          "scoring", "levels", "cubes", "tower", "flow"), required=("levels",))
     if raw.get("version", 1) != 1:
         c.err("version", f"this program reads version 1, the file says {raw.get('version')!r}")
@@ -193,7 +193,21 @@ def parse(raw: dict, p="<config>") -> Config:
     c.keys(v, "view", ("eye", "look_at", "fov_deg", "arm_opacity"))
     view = dict(eye=c.vec(v, "eye", "view", 3, [-0.75, -0.15, 1.95]), look=c.vec(v, "look_at", "view", 3, [0.5, 0.0, 0.8]),
                 fov=c.num(v, "fov_deg", "view", 45, lo=20, hi=120),
-                arm_opacity=c.num(v, "arm_opacity", "view", 0.35, lo=0.05, hi=1.0))
+                arm_opacity=c.num(v, "arm_opacity", "view", 0.25, lo=0.05, hi=1.0))
+    sv = raw.get("side_view", {})
+    c.keys(sv, "side_view", ("enabled", "from", "size", "distance", "height", "fov_deg"))
+    view["side"] = dict(enabled=c.flag(sv, "enabled", "side_view", True),
+                        side=c.text(sv, "from", "side_view", "left", ("left", "right")),
+                        size=c.num(sv, "size", "side_view", 0.28, lo=0.1, hi=0.6),
+                        distance=c.num(sv, "distance", "side_view", 0.6, lo=0.2, hi=3.0),
+                        height=c.num(sv, "height", "side_view", 0.08, lo=0.0, hi=1.0),
+                        fov=c.num(sv, "fov_deg", "side_view", 35, lo=10, hi=120))
+    dc = raw.get("depth_cues", {})
+    c.keys(dc, "depth_cues", ("enabled", "grab_height", "color", "grab_color"))
+    view["cues"] = dict(enabled=c.flag(dc, "enabled", "depth_cues", True),
+                        grab_height=c.num(dc, "grab_height", "depth_cues", 0.06, lo=0.0, hi=0.5),
+                        color=c.text(dc, "color", "depth_cues", "#ffd24a"),
+                        grab_color=c.text(dc, "grab_color", "depth_cues", "#4cd07d"))
     b = raw.get("board", {})
     c.keys(b, "board", ("center", "size"))
     board = dict(center=c.vec(b, "center", "board", 2, [0.5, 0.0]), size=c.vec(b, "size", "board", 3, [0.16, 0.56, 0.02], lo=0.005))

@@ -59,12 +59,27 @@ control_hz = 100               # the arm's target is updated this often
 touch_debounce_s = 0.05        # contact lost for less than this still counts as one touch
 
 # ---------------------------------------------------------------------------- what the player sees
-[view]                         # standing just behind the robot, looking over it at the table
-eye = [-0.35, -0.30, 1.55]     # camera position [x, y, z]: behind the robot, over its right shoulder, at head height
-look_at = [0.50, -0.02, 0.78]   # the point it looks at (the work area)
-fov_deg = 55                   # (close and wide: strong perspective, so depth is easy to judge)
-arm_opacity = 0.35             # the arm's big links (shoulder, upper arm, forearm) see-through, so they
+[view]                         # as in the screening test: from the robot's "head", looking down at the table
+eye = [-0.25, -0.05, 1.65]     # camera position [x, y, z]: just behind the robot's base, at head height
+look_at = [0.50, 0.0, 0.75]    # the point it looks at: the middle of the work area (the board, the cubes)
+fov_deg = 50                   # (adjusted from the screening test's 55 so the work area fills the middle)
+arm_opacity = 0.25             # the arm's big links (shoulder, upper arm, forearm) see-through, so they
                                # don't hide the work area (1 = solid); the wrist and gripper stay solid
+
+[side_view]                    # a small second view in the top-right corner: the gripper from the side,
+enabled = true                 # at table height, so its height above the table is easy to see
+from = "left"                  # the robot's left (or "right")
+size = 0.28                    # its width, as a share of the screen's
+distance = 0.6                 # [m] from the gripper (things nearer the camera than 15 cm short of the
+                               # gripper are cut away, so the arm doesn't block it)
+height = 0.08                  # [m] above the table: where the camera is and looks (it follows the gripper)
+fov_deg = 35
+
+[depth_cues]                   # a ring on the table straight below the gripper and a line down to it
+enabled = true
+grab_height = 0.06             # they turn green when the finger pads are this low (low enough to grab)
+color = "#ffd24a"
+grab_color = "#4cd07d"
 
 # ---------------------------------------------------------------------------- the board, wire and wand
 [board]                        # the wooden base the wire posts stand on

@@ -118,6 +118,11 @@
     #thin.low { color: #ffb02e; }
     #pair1 img { width: 240px; height: 240px; background: #fff; border-radius: 14px; padding: 8px; box-sizing: border-box; display: block; margin: 10px auto; }
     #done { z-index: 25; }
+    /* the side view's frame (the picture itself is drawn into the 3D canvas underneath) */
+    #sideBox { position: fixed; z-index: 4; pointer-events: none; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.28); box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+    #sideBox span { position: absolute; left: 8px; top: 6px; font: 600 11px/1 system-ui, sans-serif; letter-spacing: .08em;
+      color: #e8edf5; background: rgba(8,10,14,.55); padding: 4px 7px; border-radius: 6px; }
   </style>
   <script type="importmap">
   { "imports": { "three": "/vendor/three/build/three.module.js",
@@ -125,6 +130,7 @@
   </script>
 </head>
 <body>
+  <div id="sideBox" class="hidden"><span>SIDE VIEW</span></div>
   <div id="top">
     <div class="glass" id="timerBox"><div class="lab">Time left</div><div class="val" id="timer">0:00</div></div>
     <div class="glass" id="banner"><div class="lab" id="lvlK">Level</div><div id="title">Robot Buzz Wire</div><div id="text"></div></div>
