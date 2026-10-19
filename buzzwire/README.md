@@ -68,8 +68,19 @@ shadows), **low**, **standard**, **high** (`?q=...`); it steps down by itself be
 robot's positions are interpolated, so motion is smooth at any frame rate. Assets:
 `web/assets/CREDITS.md` (CC0), three.js r170 in `web/vendor/` (MIT).
 
-**Responsiveness:** the robot follows about 90 ms behind the controls in the simulation (plus the
-network): stiff joint motors, light smoothing, top speed 0.6 m/s (`[robot]`, `[controls]`).
+**Smooth motion** (`[controls]`):
+- **Even playback.** Through the internet the phone's messages arrive unevenly (bursts, then
+  gaps). The server keeps them with the phone's timestamps and plays them back evenly, a little
+  later. The delay adapts to the connection: about 30 ms on a good one, at most 150 ms
+  (`jitter_buffer_s`, `jitter_buffer_max_s`; `buzzwire/jitter.py`).
+- **Adaptive smoothing.** A One Euro filter is strong while the hand is still (no shake) and
+  weak while it moves fast (little lag).
+- **Speed limits** on the robot: top speed 0.6 m/s (`[robot]`).
+- **Tracking loss.** If the phone's camera tracking drops out (a very fast move, a blank view),
+  the robot glides to a stop and waits. When tracking returns it carries on from where it is,
+  without a jump.
+- **Slow networks.** The phone skips messages while the network is behind, instead of piling up
+  delay.
 
 ## Buzz Wire: how a level goes
 

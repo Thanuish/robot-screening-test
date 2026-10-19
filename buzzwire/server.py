@@ -34,6 +34,7 @@ from .game import BuzzWireGame
 from .tower import TowerGame
 from . import candidates as CAND
 from .session import Session
+from .jitter import Jitter
 
 NOT_FOUND = ("<!doctype html><meta name=viewport content='width=device-width'><body style='font:16px system-ui;"
              "background:#0b0d12;color:#eee;display:grid;place-items:center;height:100vh;margin:0'>"
@@ -83,6 +84,7 @@ class Server:
         self.session = None                   # a candidate's test (session.py); its game is shown instead
         self.view_yaw = 0.0
         self.controls = "touch"               # what the phone says it uses: motion, tilt, touch
+        self.jitter = Jitter(self.cfg.controls["jitter_buffer"], self.cfg.controls["jitter_buffer_max"])   # the phone's messages, played back evenly
         self.kind = None
         if args.game:
             self.new_game(args.game)
@@ -161,6 +163,8 @@ class Server:
                 continue
             if (id(g), g.li, id(g.sc)) != self._level:
                 self._export()                        # a new level or game: new geometry for the browsers
+            if self.jitter.msgs:
+                g.set_input({"right": self.jitter.sample()})
             if self.session is not None:
                 stage = self.session.stage
                 self.session.tick()                   # (steps the task's game; moves the test along)
@@ -409,12 +413,14 @@ class Server:
         """One message from a browser or the phone."""
         t, n = m.get("type"), self.counts.setdefault(ws, {"in": 0, "fps": 0})
         if t == "input":
-            if self.game is not None:                # (the menu: no robot to move)
+            if isinstance(m.get("t"), (int, float)) and self.jitter.delay > 0:
+                self.jitter.push(float(m["t"]), m.get("right"))     # (played back evenly by run())
+            elif self.game is not None:              # (the menu: no robot to move)
                 self.game.set_input(m)
             if self.session is not None and who in ("phone", "iphone") and not self.session.res.get("device"):
                 self.session.res["device"] = "iPhone" if who == "iphone" else "Android"
             self.phone_msg = time.perf_counter()
-            if (m.get("right") or {}).get("pose"):
+            if (m.get("right") or {}).get("pose") and (m.get("right") or {}).get("tracked", True):
                 self.phone_seen = time.perf_counter()
             n["in"] += 1
             if n["in"] in (1, 100) or n["in"] % 1000 == 0:

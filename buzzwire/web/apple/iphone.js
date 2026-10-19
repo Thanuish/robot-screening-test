@@ -191,6 +191,7 @@ setInterval(() => {
   if (tiltOn && status.rotation === 'full') { turnAbout(left, -R.y * TURN * dt); turnAbout(fwd, R.x * TURN * dt); }
   else { hand[2] += R.y * SPEED * dt; turnAbout([0, 0, 1], -R.x * TURN * dt); }
   const active = !!(L.x || L.y || R.x || R.y || (mode === 'tilt' && sticks.stL.id !== null));
+  if (ws.bufferedAmount > 4096) return;              // (the network is behind: skip, don't pile up delay)
   ws.send(JSON.stringify({ type: 'input', t: now / 1000, head: null, left: null,
     right: { pose: [...hand, ...handQ], grip: active ? 1 : 0, stick: [0, closed ? 1 : -1], buttons: [], epoch } }));
 }, 16);

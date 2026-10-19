@@ -168,14 +168,17 @@ def parse(raw: dict, p="<config>") -> Config:
                  table_clearance=c.num(r, "table_clearance", "robot", 0.03, lo=0.0, hi=0.3),
                  servo_stiffness=c.num(r, "servo_stiffness", "robot", 1.0, lo=0.2, hi=10.0))
     ct = raw.get("controls", {})
-    c.keys(ct, "controls", ("motion_scale", "smoothing_s", "filter", "min_cutoff_hz", "beta", "rot_beta", "glide_s"))
+    c.keys(ct, "controls", ("motion_scale", "smoothing_s", "filter", "min_cutoff_hz", "beta", "rot_beta", "glide_s",
+                                     "jitter_buffer_s", "jitter_buffer_max_s"))
     controls = dict(motion_scale=c.num(ct, "motion_scale", "controls", 1.0, lo=0.1, hi=10),
                     smoothing=c.num(ct, "smoothing_s", "controls", 0.1, lo=0.0, hi=1.0),
                     filter=c.text(ct, "filter", "controls", "one_euro", ("one_euro", "simple")),
                     min_cutoff_hz=c.num(ct, "min_cutoff_hz", "controls", 1.0, lo=0.05, hi=30),
                     beta=c.num(ct, "beta", "controls", 20.0, lo=0.0, hi=1000),
                     rot_beta=c.num(ct, "rot_beta", "controls", 2.0, lo=0.0, hi=1000),
-                    glide=c.num(ct, "glide_s", "controls", 0.025, lo=0.0, hi=0.5))
+                    glide=c.num(ct, "glide_s", "controls", 0.025, lo=0.0, hi=0.5),
+                    jitter_buffer=c.num(ct, "jitter_buffer_s", "controls", 0.03, lo=0.0, hi=0.5),
+                    jitter_buffer_max=c.num(ct, "jitter_buffer_max_s", "controls", 0.15, lo=0.0, hi=0.5))
     ph = raw.get("physics", {})
     c.keys(ph, "physics", ("timestep", "control_hz", "touch_debounce_s"))
     physics = dict(timestep=c.num(ph, "timestep", "physics", 0.002, lo=0.0005, hi=0.01),

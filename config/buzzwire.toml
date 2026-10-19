@@ -43,6 +43,12 @@ beta = 10.0                    # how fast the smoothing lets go as the hand spee
 rot_beta = 2.0                 # the same for turning [per rad/s]
 glide_s = 0.025                # glide between phone samples [s]
 smoothing_s = 0.03             # (filter = "simple": a plain low-pass with this time constant)
+# Through the internet the phone's messages arrive unevenly (a few at once, then a gap): played
+# back as they come, the robot stutters. They are kept with the phone's own timestamps and played
+# back evenly a little later: just enough to cover how uneven the connection is (measured all the
+# time), between these two (0: off, as they arrive).
+jitter_buffer_s = 0.03
+jitter_buffer_max_s = 0.15
 
 # ---------------------------------------------------------------------------- physics
 [physics]

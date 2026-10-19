@@ -164,11 +164,28 @@ function matToQuatWXYZ(R) {
 }
 const XR_TO_MJ = [[0, 0, -1], [-1, 0, 0], [0, 1, 0]];      // MuJoCo vector = this x WebXR vector
 
+// Tracking lost (a fast move, a blank view): the position is held where it was last known, the
+// turning still follows (the gyroscope keeps working) and MOVE stays held, so the robot glides to
+// a stop instead of letting go. When tracking comes back, or the position jumps (the tracking
+// re-locating itself), the server re-anchors (a new epoch): the robot goes on from where it is.
+const JUMP_M = 0.08;            // [m] more than this between two messages (~15 ms) is a jump, not a move
+let lastGood = null, wasLost = false;
+function resetTracking() { lastGood = null; epoch++; }
 function send(pose, tracked) {
   if (!wsOpen) return;
+  if (ws.bufferedAmount > 4096) return;             // (the network is behind: skip, don't pile up delay)
   let right = null;
   if (pose) {
-    const p = pose.transform.position, o = pose.transform.orientation;
+    let p = pose.transform.position;
+    const o = pose.transform.orientation;
+    if (tracked) {
+      if (wasLost) { wasLost = false; epoch++; }
+      if (lastGood && Math.hypot(p.x - lastGood.x, p.y - lastGood.y, p.z - lastGood.z) > JUMP_M) epoch++;
+      lastGood = { x: p.x, y: p.y, z: p.z };
+    } else {
+      wasLost = true;
+      if (lastGood) p = lastGood;
+    }
     const yaw = yawOf([o.x, o.y, o.z, o.w]);
     if (recenterReq && tracked) { calYaw = yaw; recenterReq = false; epoch++; }
     // undo the calibration heading, then XR -> MuJoCo axes
@@ -194,7 +211,8 @@ function send(pose, tracked) {
       const a = (yaw - calYaw + vy) / 2;
       q = [Math.cos(a), 0, 0, Math.sin(a)];
     }
-    right = { pose: [...mj, ...q], grip: moving && tracked && warmed ? 1 : 0, stick: [0, closed ? 1 : -1], buttons: [], epoch };
+    right = { pose: [...mj, ...q], grip: moving && warmed && lastGood ? 1 : 0, stick: [0, closed ? 1 : -1], buttons: [],
+              epoch, tracked };
   }
   ws.send(JSON.stringify({ type: 'input', t: performance.now() / 1000, head: null, left: null, right }));
 }
@@ -233,6 +251,8 @@ $('start').addEventListener('click', async () => {
   const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: true });
   session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
   const ref = await session.requestReferenceSpace('local');
+  ref.addEventListener('reset', resetTracking);       // (the tracking re-located itself: no jump)
+  resetTracking();
   recenterReq = true;
   // a finger on the screen (not on GRAB / RE-CENTER) is a "screen" input source: hold = MOVE
   const isScreen = (e) => e.inputSource && e.inputSource.targetRayMode === 'screen';
@@ -337,6 +357,7 @@ setInterval(() => {
   if (tiltOn && full) { turnAbout(left, -R.y * TURN * dt); turnAbout(fwd, R.x * TURN * dt); }
   else { hand[2] += R.y * SPEED * dt; turnAbout([0, 0, 1], -R.x * TURN * dt); }
   const active = L.x || L.y || R.x || R.y;
+  if (ws.bufferedAmount > 4096) return;              // (the network is behind: skip, don't pile up delay)
   ws.send(JSON.stringify({ type: 'input', t: now / 1000, head: null, left: null,
     right: { pose: [...hand, ...handQ], grip: active ? 1 : 0, stick: [0, closed ? 1 : -1], buttons: [], epoch } }));
 }, 16);
