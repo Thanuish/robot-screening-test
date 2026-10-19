@@ -171,8 +171,8 @@ def parse(raw: dict, p="<config>") -> Config:
     c.keys(ct, "controls", ("motion_scale", "smoothing_s", "filter", "min_cutoff_hz", "beta", "rot_beta", "glide_s",
                                      "jitter_buffer_s", "jitter_buffer_max_s"))
     controls = dict(motion_scale=c.num(ct, "motion_scale", "controls", 1.0, lo=0.1, hi=10),
-                    smoothing=c.num(ct, "smoothing_s", "controls", 0.1, lo=0.0, hi=1.0),
-                    filter=c.text(ct, "filter", "controls", "one_euro", ("one_euro", "simple")),
+                    smoothing=c.num(ct, "smoothing_s", "controls", 0.12, lo=0.0, hi=1.0),
+                    filter=c.text(ct, "filter", "controls", "simple", ("simple", "one_euro")),
                     min_cutoff_hz=c.num(ct, "min_cutoff_hz", "controls", 1.0, lo=0.05, hi=30),
                     beta=c.num(ct, "beta", "controls", 20.0, lo=0.0, hi=1000),
                     rot_beta=c.num(ct, "rot_beta", "controls", 2.0, lo=0.0, hi=1000),

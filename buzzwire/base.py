@@ -81,11 +81,13 @@ class OneEuro:
 
 
 class Follower:
-    """The arm's goal: the teleop target, smoothed and speed-limited.
+    """The arm's goal: the teleop target, smoothed, then speed-limited (as vrteleop/arms.py:
+    _smoothed, then _limited).
 
-    Smoothing ([controls] filter): "one_euro" filters each new controller sample (a phone sends ~30
-    a second) with the One Euro filter, using the real time between samples; "simple" is a plain
-    low-pass with the time constant smoothing_s."""
+    Smoothing ([controls] filter): "simple" (the default, as in the screening test) moves a
+    fraction 1 - exp(-dt / smoothing_s) of the way toward the hand every control tick, position
+    and rotation: the same delay at every speed. "one_euro" filters each new controller sample with
+    the One Euro filter, then glides between samples."""
 
     def __init__(self, cfg: Config):
         ct = cfg.controls
