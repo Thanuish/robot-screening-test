@@ -153,6 +153,34 @@ window.addEventListener('teleop-scene', setupViewAids);
 if (window.__teleop) setupViewAids();
 
 let wasHoming = false;
+// ------------------------------------------------------------ webcam hand tracking (no phone)
+// handtrack.js: the hand in front of the webcam drives the arm, sent like the phone's input.
+let lastStatus = null, hand = null;
+$('handStart').addEventListener('click', async () => {
+  if (hand) return;
+  $('handErr').textContent = '';
+  $('handStart').disabled = true;
+  $('handStart').textContent = 'Starting the webcam…';
+  try {
+    const { startHandTracking } = await import('/test-static/handtrack.js');
+    $('handBox').classList.remove('hidden');
+    hand = await startHandTracking({
+      send: (m) => window.__teleop?.send?.(m),
+      status: () => lastStatus,
+      preview: $('handPreview'),
+      onInfo: (text, ok) => { $('handInfo').textContent = text; $('handInfo').className = ok ? 'ok' : 'bad'; },
+    });
+    $('help').classList.add('hidden');                    // (the phone's help; the hand box says the keys)
+    $('handStart').textContent = 'Hand tracking on';
+  } catch (e) {
+    $('handErr').textContent = 'Could not start the webcam hand tracking: ' + (e.message || e);
+    $('handStart').disabled = false;
+    $('handStart').textContent = 'USE MY HAND (WEBCAM)';
+    $('handBox').classList.add('hidden');
+  }
+});
+window.addEventListener('teleop-status', (ev) => { lastStatus = ev.detail; });
+
 window.addEventListener('teleop-status', (ev) => {
   const g = ev.detail.task_game;
   if (!g) return;
@@ -161,7 +189,7 @@ window.addEventListener('teleop-status', (ev) => {
   const pairing = g.kind === 'pair';
   $('pair').classList.toggle('hidden', !pairing);
   $('phoneBadge').classList.toggle('hidden', pairing || g.finished);
-  $('help').classList.toggle('hidden', pairing || g.finished);
+  $('help').classList.toggle('hidden', pairing || g.finished || !!hand);
   $('done').classList.toggle('hidden', !g.finished);
   $('phoneState').innerHTML = g.phone ? '<span class="ok">● Phone connected</span>'
                                       : '<span class="bad">● Phone not connected</span>';

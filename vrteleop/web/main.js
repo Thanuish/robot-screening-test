@@ -274,7 +274,7 @@ async function loadScene() {
   }
   cloths = (js.flexes || []).map(fx => makeCloth(fx, mats));
   // handle for page scripts (e.g. the screening monitor's depth cues) and the browser console
-  window.__teleop = { scene, cloths, camera, orbit, mjRoot, THREE, renderer, afterRender,
+  window.__teleop = { scene, cloths, camera, orbit, mjRoot, THREE, renderer, afterRender, send,
                       body: (name) => bodyObjs.find(o => o.name === name) };
   window.dispatchEvent(new Event('teleop-scene'));
   document.getElementById('loading').style.display = 'none';
@@ -389,7 +389,7 @@ refreshViewBtn();
 document.getElementById('xrrow').appendChild(viewBtn);
 window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyV') viewBtn.onclick();
-  if (e.code === 'KeyH') for (const id of ['hud', 'help'])      // hide/show overlays
+  if (e.code === 'KeyH' && !MONITOR) for (const id of ['hud', 'help'])      // hide/show overlays (not on a monitor page: H is HOME there)
     document.getElementById(id).style.display = document.getElementById(id).style.display === 'none' ? '' : 'none';
   if (e.code === 'KeyF') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
 });

@@ -55,6 +55,15 @@
             border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
 #sideView span { position: absolute; left: 6px; top: 4px; font-size: 11px; letter-spacing: .08em; color: #fff;
                  background: rgba(20,22,27,.7); padding: 1px 6px; border-radius: 3px; }
+.handAlt { margin-top: 18px; color: #c9ced8; }
+#handStart { margin-top: 6px; padding: 12px 18px; font-size: 16px; font-weight: 700; border: 0; border-radius: 10px;
+             background: #5b3fc4; color: #fff; cursor: pointer; }
+#handErr { color: #ff8a80; margin-top: 6px; font-size: 14px; }
+#handBox { position: fixed; left: 18px; bottom: 18px; z-index: 13; background: rgba(20,22,27,.9); border: 1px solid #3a3f4a;
+           border-radius: 10px; padding: 8px; width: 272px; font-size: 12px; color: #d6d6d6; }
+#handBox canvas { width: 256px; height: 192px; border-radius: 6px; display: block; background: #000; }
+#handInfo { margin-top: 6px; } #handInfo.ok { color: #4cd07d; } #handInfo.bad { color: #ffd24a; }
+#handBox .keys { margin-top: 4px; color: #9aa0ab; }
 #conn { position: fixed; top: 6px; right: 8px; z-index: 20; font-size: 12px; }
     #conn.ok { color: #4cd07d; } #conn.bad { color: #ff7070; }
   </style>
@@ -106,8 +115,17 @@
         </ol>
         <p>Or type this address on the phone:</p>
         <div id="pairUrl"></div>
+        <p class="handAlt">No Android phone? Control the robot with <b>your hand</b> in front of the webcam:</p>
+        <button id="handStart">USE MY HAND (WEBCAM)</button>
+        <div id="handErr"></div>
       </div>
     </div>
+  </div>
+
+  <div id="handBox" class="hidden">
+    <canvas id="handPreview" width="256" height="192"></canvas>
+    <div id="handInfo">Starting the webcam…</div>
+    <div class="keys"><b>SPACE</b> held = move · <b>pinch</b> = grab · <b>C</b> re-centre · <b>H</b> home</div>
   </div>
 
   <div id="phoneBadge" class="hidden">
