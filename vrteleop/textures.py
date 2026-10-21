@@ -5,6 +5,8 @@ repository ships no image files and both renderers show exactly the same surface
 """
 from __future__ import annotations
 
+import hashlib
+
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -94,6 +96,7 @@ def encode(img: np.ndarray, fmt: str = "JPEG", quality: int = 90) -> bytes:
 
 
 GENERATED_DIR = Path(__file__).resolve().parent.parent / "assets" / "generated"
+_written: dict[str, bytes] = {}   # texture name -> fingerprint of the image last checked / written
 
 
 def add_texture(spec: mujoco.MjSpec, name: str, img: np.ndarray) -> None:
@@ -103,9 +106,13 @@ def add_texture(spec: mujoco.MjSpec, name: str, img: np.ndarray) -> None:
     compiled model can still be saved as XML (MjSpec cannot serialise in-memory textures)."""
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     path = GENERATED_DIR / f"{name}.png"
-    png = encode(img, "PNG")
-    if not path.exists() or path.read_bytes() != png:
-        path.write_bytes(png)
+    # (encoding a PNG takes ~20 ms an image: only when this image changed since the last time)
+    digest = hashlib.blake2b(np.ascontiguousarray(img).tobytes(), digest_size=16).digest()
+    if _written.get(name) != digest or not path.exists():
+        png = encode(img, "PNG")
+        if not path.exists() or path.read_bytes() != png:
+            path.write_bytes(png)
+        _written[name] = digest
     t = spec.add_texture()
     t.name = name
     t.type = mujoco.mjtTexture.mjTEXTURE_2D

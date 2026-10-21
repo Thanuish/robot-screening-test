@@ -8,7 +8,7 @@
     :root { --bg: #0b0d12; --panel: #151922; --line: #262c38; --text: #e9edf3; --dim: #8d95a3; --accent: #36c2ff; --go: #2fdc7f; --warn: #ffb02e; }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-    .wrap { max-width: 1240px; margin: 0 auto; padding: 24px 20px 60px; }
+    .wrap { max-width: 1480px; margin: 0 auto; padding: 24px 20px 60px; }
     h1 { font-size: 24px; margin: 0 0 4px; } .sub { color: var(--dim); margin-bottom: 20px; }
     .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; margin-bottom: 18px; }
     .panel h2 { font-size: 15px; margin: 0 0 12px; letter-spacing: .02em; }
@@ -17,6 +17,7 @@
     input, select { font: inherit; color: var(--text); background: #0f131a; border: 1px solid #39404f; border-radius: 8px; padding: 9px 11px; min-width: 160px; }
     button { font: 700 13px system-ui; color: #fff; background: linear-gradient(135deg, #36c2ff, #7b5cff); border: 0; border-radius: 8px; padding: 10px 16px; cursor: pointer; }
     button.small { padding: 5px 10px; font-size: 12px; background: #262c38; }
+    button.small.go { background: linear-gradient(135deg, #36c2ff, #7b5cff); }
     #made { margin-top: 12px; color: #cfe; white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; }
@@ -28,6 +29,25 @@
     .num { font-variant-numeric: tabular-nums; } .dim { color: var(--dim); } .live { color: var(--go); }
     .warn { color: var(--warn); }
     .note { color: var(--dim); font-size: 12px; margin-top: 8px; }
+    tr.sel td { background: rgba(54,194,255,.07); }
+    #detail { display: none; } #detail.on { display: block; }
+    .dhead { display: flex; justify-content: space-between; align-items: start; gap: 12px; flex-wrap: wrap; }
+    .facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin: 10px 0 4px; }
+    .fact { background: #0f131a; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+    .fact b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; } .fact span { color: var(--dim); font-size: 12px; }
+    .tasks { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; margin-top: 12px; }
+    .task { background: #0f131a; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+    .task h3 { margin: 0; font-size: 15px; display: flex; justify-content: space-between; gap: 8px; }
+    .task h3 .score { font-variant-numeric: tabular-nums; color: var(--accent); }
+    .task .kind { color: var(--dim); font-size: 12px; margin-bottom: 8px; }
+    .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; margin-bottom: 8px; }
+    .kv span { color: var(--dim); } .kv b { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .tl { max-height: 230px; overflow-y: auto; border-top: 1px solid var(--line); padding-top: 6px; font-size: 13px; }
+    .tl div { display: grid; grid-template-columns: 52px 1fr; gap: 8px; padding: 2px 0; }
+    .tl .t { color: var(--dim); font-variant-numeric: tabular-nums; }
+    .tl .bad { color: #ff9b8f; } .tl .good { color: #9ff0c4; }
+    .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+    h4 { margin: 16px 0 4px; font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
   </style>
 </head>
 <body><div class="wrap">
@@ -55,8 +75,11 @@
         <th>Practice</th><th>Phone / used</th><th>Started</th><th>Link</th></tr></thead>
       <tbody id="rows"></tbody>
     </table></div>
-    <div class="note">Results: data/buzzwire/candidates/&lt;code&gt;/&lt;date&gt;/results.json. Scores are 0–100 per task; overall is their mean.</div>
+    <div class="note">Results: data/buzzwire/candidates/&lt;code&gt;/&lt;date&gt;/results.json. Scores are 0–100 per task; overall is their mean.
+      <b>Details</b> shows everything recorded for one candidate: each task's numbers and what happened when.</div>
   </div>
+
+  <div class="panel" id="detail"></div>
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -75,7 +98,7 @@ async function load() {
   // don't rebuild while a control dropdown is being used
   if (document.activeElement && document.activeElement.classList.contains('ctl')) return;
   $('rows').innerHTML = rows.map(r => `<tr>
-    <td>${esc(r.name)}<div class="dim">${esc(r.email)}</div></td>
+    <td>${esc(r.name)}<div class="dim">${esc(r.email)}</div><button class="small go" data-detail="${r.code}" style="margin-top:6px">Details</button></td>
     <td class="num">${r.code}</td>
     <td><select class="ctl" data-code="${r.code}">${Object.entries(data.controls).map(([k, v]) =>
       `<option value="${k}" ${k === r.controls ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></td>
@@ -88,6 +111,8 @@ async function load() {
     <td class="dim">${esc(r.started || r.created || '')}</td>
     <td><button class="small" data-link="${esc(r.link)}">Copy link</button></td>
   </tr>`).join('');
+  document.querySelectorAll('button[data-detail]').forEach(b => b.onclick = () => showDetail(b.dataset.detail, 0));
+  document.querySelectorAll('#rows tr').forEach(tr => tr.classList.toggle('sel', !!detail && tr.querySelector(`[data-detail="${detail.code}"]`) !== null));
   document.querySelectorAll('select.ctl').forEach(sel => sel.onchange = async () => {
     await fetch(`/admin/candidates/${sel.dataset.code}/controls`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ controls: sel.value }) });
@@ -99,6 +124,92 @@ async function load() {
     setTimeout(() => b.textContent = 'Copy link', 1500);
   });
 }
+// ------------------------------------------------------------ one candidate's details
+let detail = null;                        // { code, attempt, live }
+const STAGES = { tutorial: 'Tutorial started at', practice: 'Practice started at', ready: '"Ready?" at',
+                 assessment: 'Assessment started at', done: 'Finished at' };
+const mmss = (s) => { s = Math.max(0, Math.round(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const nth = (i) => { const n = i + 1, s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
+const nice = (k) => String(k).replace(/_/g, ' ');
+function blockName(t, i) {
+  const c = (t.block_colors || [])[i];
+  return `${c ? `<span class="swatch" style="background:${c}"></span>` : ''}${nth(i)} block`;
+}
+// what happened, in words: [time, kind, what, value]
+function eventText(t, e) {
+  const [, k, w, v] = e;
+  if (t.game === 'tower') return {
+    grasp: ['Grabbed the ' + blockName(t, w)], place: [`Placed the ${blockName(t, w)}: tower ${v} cm`, 'good'],
+    off: [`Took the ${blockName(t, w)} off the tower`], fall: [`The ${blockName(t, w)} fell${v !== undefined ? ` (the tower was ${v} cm)` : ''}`, 'bad'],
+    best: [`New best height that stood: ${w} cm`, 'good'], drop: [`Dropped the ${blockName(t, w)}`, 'bad'] }[k] || [esc(k + ' ' + w)];
+  if (t.game === 'rings') return {
+    grasp: [`Grabbed the ${esc(w)} ring`], hung: [`The ${esc(w)} ring is on its peg`, 'good'],
+    off: [`The ${esc(w)} ring came off its peg`, 'bad'], drop: [`Dropped the ${esc(w)} ring`, 'bad'],
+    round: [`Round ${w} complete`, 'good'] }[k] || [esc(k + ' ' + w)];
+  return { grasp: [`Grabbed the ${esc(nice(w))}`], drop: [`Dropped the ${esc(nice(w))}`, 'bad'],
+           step: [`Done: ${esc(w)}`, 'good'], undone: [`Undone: ${esc(w)}`, 'bad'] }[k] || [esc(k + ' ' + w)];
+}
+function taskFacts(t) {
+  const g = t.grasp_attempts ? `${t.grasps} of ${t.grasp_attempts} GRABs lifted something` : 'no GRAB';
+  const common = [['Time', `${mmss(t.time_s)}${t.timed_out ? ' (time up)' : ''}`], ['Grasps', g], ['Drops', t.drops ?? 0],
+                  ['Robot path', `${(t.path_m || 0).toFixed(1)} m`], ['MOVE presses', t.clutches ?? '']];
+  if (t.game === 'tower') return [['Blocks placed', `${t.placed} of ${t.blocks} on the tower at the end`],
+    ['Best height', `${t.best_height_cm} cm (that stood 1 s)`], ['Height at the end', `${t.height_cm} cm`],
+    ['Falls', t.falls], ...common];
+  if (t.game === 'rings') return [['Rounds', t.rounds], ['Rings hung', `${t.hung + (t.hung_now || 0)}`],
+    ['Round times', (t.round_times || []).map(x => `${x.toFixed(0)} s`).join(', ') || 'none'], ...common];
+  if (t.game === 'wire') return [['Touches', `${t.touches} (${(t.touch_time_s || 0).toFixed(1)} s touching)`],
+    ['Progress', `${Math.round(100 * (t.progress || 0))} %`], ...common];
+  return [['Steps', `${t.steps_done} of ${t.steps_total}`], ['Wrong bin', t.wrong_bin ?? 0], ...common];
+}
+function taskCard(key, t, games) {
+  t = { ...t, game: t.game || key.split(':')[0] };      // (older results don't say their game)
+  const evs = (t.events || []).map(e => { const [txt, cls] = eventText(t, e);
+    return `<div><span class="t">${mmss(e[0])}</span><span class="${cls || ''}">${txt}</span></div>`; }).join('');
+  return `<div class="task"><h3><span>${esc(t.title || key)}</span><span class="score">${t.score ?? ''}</span></h3>
+    <div class="kind">${esc(games[t.game] || t.game || key.split(':')[0])} · ${t.completed ? 'completed' : t.timed_out ? 'time up' : 'not finished'}</div>
+    <div class="kv">${taskFacts(t).map(([k, v]) => `<span>${k}</span><b>${v}</b>`).join('')}</div>
+    <div class="tl">${evs || '<div class="dim">nothing recorded</div>'}</div></div>`;
+}
+async function showDetail(code, attempt) {
+  detail = { code, attempt };
+  const j = await (await fetch(`/admin/api/candidate/${code}`)).json();
+  detail.live = j.running;
+  const el = $('detail');
+  el.classList.add('on');
+  if (!j.attempts.length) { el.innerHTML = `<h2>${esc(j.name)}</h2><div class="dim">No attempt yet.</div>`; return; }
+  const a = j.attempts[Math.min(attempt, j.attempts.length - 1)];
+  const st = a.stage_times || {};
+  const tut = a.tutorial || {};
+  const practice = (a.practice || []).map((p, i) => `<div class="fact"><span>Practice round ${p.round || i + 1}</span>
+    ${Object.entries(p.tasks || {}).map(([k, t]) => `<b style="font-size:13px">${esc(t.title || k)}: ${t.score ?? '–'}</b>`).join('') || '<b>–</b>'}</div>`).join('');
+  el.innerHTML = `<div class="dhead"><div><h2 style="margin:0">${esc(j.name)} <span class="dim">· ${esc(j.code)}</span>
+      ${j.running && attempt === 0 ? '<span class="live">● live</span>' : ''}</h2>
+      <div class="dim">${esc(j.email || '')}</div></div>
+    <div class="row">${j.attempts.length > 1 ? `<label>Attempt<select id="dAttempt">${j.attempts.map((x, i) =>
+      `<option value="${i}" ${i === attempt ? 'selected' : ''}>${esc(x.started || x.folder)}${i === 0 ? ' (latest)' : ''}</option>`).join('')}</select></label>` : ''}
+      <button class="small" id="dClose">Close</button></div></div>
+    <div class="facts">
+      <div class="fact"><span>Overall</span><b>${(a.scores || {}).overall ?? '–'}</b></div>
+      <div class="fact"><span>Stage</span><b>${esc(a.stage || '')}</b></div>
+      <div class="fact"><span>Started</span><b style="font-size:13px">${esc(a.started || '')}</b></div>
+      <div class="fact"><span>Whole test</span><b>${mmss(a.elapsed_s)}</b></div>
+      <div class="fact"><span>Phone / controls used</span><b style="font-size:13px">${esc(a.device || '?')} / ${esc(a.controls || '?')}</b></div>
+      <div class="fact"><span>Practice rounds</span><b>${(a.practice || []).length}</b></div>
+      ${Object.entries(STAGES).filter(([k]) => st[k] !== undefined).map(([k, label]) =>
+        `<div class="fact"><span>${label}</span><b>${mmss(st[k])}</b></div>`).join('')}
+    </div>
+    ${tut.tutorial_steps ? `<h4>Tutorial: each control learned at</h4><div class="facts">${Object.entries(tut.tutorial_steps).map(([k, v]) =>
+      `<div class="fact"><span>${esc(nice(k))}</span><b>${mmss(v)}</b></div>`).join('')}</div>` : ''}
+    ${practice ? `<h4>Practice</h4><div class="facts">${practice}</div>` : ''}
+    <h4>Assessment</h4>
+    <div class="tasks">${Object.entries(a.assessment || {}).map(([k, t]) => taskCard(k, t, j.games)).join('') || '<div class="dim">not started</div>'}</div>`;
+  $('dClose').onclick = () => { detail = null; el.classList.remove('on'); load(); };
+  if ($('dAttempt')) $('dAttempt').onchange = () => showDetail(code, +$('dAttempt').value);
+  document.querySelectorAll('#rows tr').forEach(tr => tr.classList.toggle('sel', tr.querySelector(`[data-detail="${code}"]`) !== null));
+}
+setInterval(() => { if (detail && detail.live && detail.attempt === 0) showDetail(detail.code, 0); }, 5000);   // (a test running: keep it current)
+
 $('nMake').onclick = async () => {
   const r = await fetch('/admin/candidates', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: $('nName').value, email: $('nEmail').value, controls: $('nControls').value }) });

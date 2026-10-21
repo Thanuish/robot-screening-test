@@ -150,14 +150,15 @@ def load(p=None) -> Config:
 
 def parse(raw: dict, p="<config>") -> Config:
     c = _Checker()
-    c.keys(raw, "file", ("version", "robot", "controls", "physics", "view", "board", "wire", "wand",
+    c.keys(raw, "file", ("version", "robot", "controls", "physics", "view", "side_view", "depth_cues", "board", "wire", "wand", "rings",
                          "scoring", "levels", "cubes", "tower", "flow"), required=("levels",))
     if raw.get("version", 1) != 1:
         c.err("version", f"this program reads version 1, the file says {raw.get('version')!r}")
 
     r = raw.get("robot", {})
     c.keys(r, "robot", ("model", "gripper", "base", "home_deg", "max_speed", "max_turn_deg", "joint_speed_deg",
-                        "table_clearance", "servo_stiffness"))
+                        "arm_clearance", "finger_clearance", "servo_stiffness",
+                        "servo_feedforward"))
     robot = dict(model=c.text(r, "model", "robot", "ur5e", tuple(ROBOTS)),
                  gripper=c.text(r, "gripper", "robot", "robotiq_2f85", GRIPPERS),
                  base=c.vec(r, "base", "robot", 2, [0.0, 0.0]),
@@ -165,17 +166,23 @@ def parse(raw: dict, p="<config>") -> Config:
                  max_speed=c.num(r, "max_speed", "robot", 0.3, lo=0.01, hi=3.0),
                  max_turn=math.radians(c.num(r, "max_turn_deg", "robot", 90, lo=1, hi=720)),
                  joint_speed=math.radians(c.num(r, "joint_speed_deg", "robot", 120, lo=1, hi=720)),
-                 table_clearance=c.num(r, "table_clearance", "robot", 0.03, lo=0.0, hi=0.3),
-                 servo_stiffness=c.num(r, "servo_stiffness", "robot", 1.0, lo=0.2, hi=10.0))
+                 arm_clearance=c.num(r, "arm_clearance", "robot", 0.02, lo=0.0, hi=0.3),
+                 finger_clearance=c.num(r, "finger_clearance", "robot", 0.003, lo=0.0, hi=0.3),
+                 servo_stiffness=c.num(r, "servo_stiffness", "robot", 1.0, lo=0.2, hi=10.0),
+                 servo_feedforward=c.flag(r, "servo_feedforward", "robot", True))
     ct = raw.get("controls", {})
-    c.keys(ct, "controls", ("motion_scale", "smoothing_s", "filter", "min_cutoff_hz", "beta", "rot_beta", "glide_s"))
+    c.keys(ct, "controls", ("motion_scale", "smoothing_s", "filter", "min_cutoff_hz", "beta", "rot_beta", "glide_s",
+                                     "jitter_buffer_s", "jitter_buffer_max_s", "input_timeout_s"))
     controls = dict(motion_scale=c.num(ct, "motion_scale", "controls", 1.0, lo=0.1, hi=10),
-                    smoothing=c.num(ct, "smoothing_s", "controls", 0.1, lo=0.0, hi=1.0),
-                    filter=c.text(ct, "filter", "controls", "one_euro", ("one_euro", "simple")),
+                    smoothing=c.num(ct, "smoothing_s", "controls", 0.12, lo=0.0, hi=1.0),
+                    filter=c.text(ct, "filter", "controls", "simple", ("simple", "one_euro")),
                     min_cutoff_hz=c.num(ct, "min_cutoff_hz", "controls", 1.0, lo=0.05, hi=30),
                     beta=c.num(ct, "beta", "controls", 20.0, lo=0.0, hi=1000),
                     rot_beta=c.num(ct, "rot_beta", "controls", 2.0, lo=0.0, hi=1000),
-                    glide=c.num(ct, "glide_s", "controls", 0.025, lo=0.0, hi=0.5))
+                    glide=c.num(ct, "glide_s", "controls", 0.025, lo=0.0, hi=0.5),
+                    jitter_buffer=c.num(ct, "jitter_buffer_s", "controls", 0.0, lo=0.0, hi=0.5),
+                    jitter_buffer_max=c.num(ct, "jitter_buffer_max_s", "controls", 0.15, lo=0.0, hi=0.5),
+                    input_timeout=c.num(ct, "input_timeout_s", "controls", 0.35, lo=0.05, hi=5.0))
     ph = raw.get("physics", {})
     c.keys(ph, "physics", ("timestep", "control_hz", "touch_debounce_s"))
     physics = dict(timestep=c.num(ph, "timestep", "physics", 0.002, lo=0.0005, hi=0.01),
@@ -188,7 +195,21 @@ def parse(raw: dict, p="<config>") -> Config:
     c.keys(v, "view", ("eye", "look_at", "fov_deg", "arm_opacity"))
     view = dict(eye=c.vec(v, "eye", "view", 3, [-0.75, -0.15, 1.95]), look=c.vec(v, "look_at", "view", 3, [0.5, 0.0, 0.8]),
                 fov=c.num(v, "fov_deg", "view", 45, lo=20, hi=120),
-                arm_opacity=c.num(v, "arm_opacity", "view", 0.35, lo=0.05, hi=1.0))
+                arm_opacity=c.num(v, "arm_opacity", "view", 0.25, lo=0.05, hi=1.0))
+    sv = raw.get("side_view", {})
+    c.keys(sv, "side_view", ("enabled", "from", "size", "distance", "height", "fov_deg"))
+    view["side"] = dict(enabled=c.flag(sv, "enabled", "side_view", True),
+                        side=c.text(sv, "from", "side_view", "left", ("left", "right")),
+                        size=c.num(sv, "size", "side_view", 0.28, lo=0.1, hi=0.6),
+                        distance=c.num(sv, "distance", "side_view", 0.6, lo=0.2, hi=3.0),
+                        height=c.num(sv, "height", "side_view", 0.08, lo=0.0, hi=1.0),
+                        fov=c.num(sv, "fov_deg", "side_view", 35, lo=10, hi=120))
+    dc = raw.get("depth_cues", {})
+    c.keys(dc, "depth_cues", ("enabled", "grab_height", "color", "grab_color"))
+    view["cues"] = dict(enabled=c.flag(dc, "enabled", "depth_cues", True),
+                        grab_height=c.num(dc, "grab_height", "depth_cues", 0.06, lo=0.0, hi=0.5),
+                        color=c.text(dc, "color", "depth_cues", "#ffd24a"),
+                        grab_color=c.text(dc, "grab_color", "depth_cues", "#4cd07d"))
     b = raw.get("board", {})
     c.keys(b, "board", ("center", "size"))
     board = dict(center=c.vec(b, "center", "board", 2, [0.5, 0.0]), size=c.vec(b, "size", "board", 3, [0.16, 0.56, 0.02], lo=0.005))
@@ -269,7 +290,8 @@ def parse(raw: dict, p="<config>") -> Config:
         c.err("levels", "at least one [[levels]] entry is needed")
     elif not any(lv.scored for lv in levels):
         c.err("levels", "no level is scored = true")
-    games = dict(cubes=_cubes(c, raw.get("cubes", {})), tower=_tower(c, raw.get("tower", {}), robot))
+    games = dict(cubes=_cubes(c, raw.get("cubes", {})), tower=_tower(c, raw.get("tower", {}), robot),
+                 rings=_rings(c, raw.get("rings", {}), robot))
     games["flow"] = _flow(c, raw.get("flow", {}), levels, games)
     if c.problems:
         raise ConfigError(p, c.problems)
@@ -278,13 +300,13 @@ def parse(raw: dict, p="<config>") -> Config:
 
 
 def _cubes(c: _Checker, raw: dict) -> dict:
-    """[cubes]: which tasks of config/screening.toml, and how low the gripper may go."""
-    c.keys(raw, "cubes", ("phases", "table_clearance"))
+    """[cubes]: which tasks of config/screening.toml."""
+    c.keys(raw, "cubes", ("phases",))
     phases = raw.get("phases", ["pick", "shapes", "sort"])
     if not (isinstance(phases, list) and phases and all(isinstance(x, str) for x in phases)):
         c.err("cubes.phases", "should be a list of phase keys from config/screening.toml, e.g. [\"pick\", \"shapes\"]")
         phases = ["pick", "shapes", "sort"]
-    return dict(phases=phases, table_clearance=c.num(raw, "table_clearance", "cubes", 0.015, lo=0.0, hi=0.2))
+    return dict(phases=phases)
 
 
 def _color(c: _Checker, v, where):
@@ -300,36 +322,36 @@ def _color(c: _Checker, v, where):
 def _flow(c: _Checker, raw: dict, wire_levels: list, games: dict) -> dict:
     """[flow]: the candidate's test: practice tasks, how often, the assessment's tasks."""
     c.keys(raw, "flow", ("practice", "max_practice_rounds", "assessment", "card_seconds", "default_controls"))
-    known = {"wire": [lv.key for lv in wire_levels], "tower": [lv["key"] for lv in games["tower"]["levels"]],
+    known = {"tower": [lv["key"] for lv in games["tower"]["levels"]],
+             "rings": [lv["key"] for lv in games["rings"]["levels"]],
              "cubes": None}                       # (cubes: the phases of config/screening.toml, checked when used)
 
     def tasks(key, default):
         out = []
         for t in raw.get(key, default):
             if not isinstance(t, str) or ":" not in t:
-                c.err(f"flow.{key}", f"{t!r}: should be \"game:level\", e.g. \"wire:curves\"")
+                c.err(f"flow.{key}", f"{t!r}: should be \"game:level\", e.g. \"tower:cubes\"")
                 continue
             g, lv = t.split(":", 1)
             if g not in known:
-                c.err(f"flow.{key}", f"{t!r}: no game '{g}' (wire, cubes, tower)")
+                c.err(f"flow.{key}", f"{t!r}: no game '{g}' ({', '.join(known)})")
             elif known[g] is not None and lv not in known[g]:
                 c.err(f"flow.{key}", f"{t!r}: game '{g}' has no level '{lv}' ({', '.join(known[g])})")
             else:
                 out.append((g, lv))
         return out
-    return dict(practice=tasks("practice", ["wire:straight", "tower:practice"]),
+    return dict(practice=tasks("practice", ["cubes:pick", "tower:practice"]),
                 max_practice_rounds=c.num(raw, "max_practice_rounds", "flow", 3, lo=1, hi=20, integer=True),
-                assessment=tasks("assessment", ["cubes:shapes", "cubes:sort", "wire:curves", "tower:cubes"]),
+                assessment=tasks("assessment", ["cubes:shapes", "cubes:sort", "tower:cubes"]),
                 card_seconds=c.num(raw, "card_seconds", "flow", 8, lo=0, hi=60),
                 default_controls=c.text(raw, "default_controls", "flow", "motion", ("motion", "touch", "choice")))
 
 
 def _tower(c: _Checker, raw: dict, robot: dict) -> dict:
     """[tower]: the stacking game: the platform, where blocks appear, the levels' blocks."""
-    c.keys(raw, "tower", ("table_clearance", "platform_center", "platform_size", "supply", "levels",
+    c.keys(raw, "tower", ("platform_center", "platform_size", "supply", "levels",
                           "block_mass", "friction"))
-    out = dict(table_clearance=c.num(raw, "table_clearance", "tower", 0.015, lo=0.0, hi=0.2),
-               platform_center=c.vec(raw, "platform_center", "tower", 2, [0.52, 0.06]),
+    out = dict(platform_center=c.vec(raw, "platform_center", "tower", 2, [0.52, 0.06]),
                platform_size=c.vec(raw, "platform_size", "tower", 3, [0.14, 0.14, 0.02], lo=0.005),
                supply=c.vec(raw, "supply", "tower", 2, [0.42, -0.18]),
                block_mass=c.num(raw, "block_mass", "tower", 0.06, lo=0.005, hi=1.0),
@@ -362,4 +384,80 @@ def _tower(c: _Checker, raw: dict, robot: dict) -> dict:
                                   target=c.num(lv, "target_height", w, 0.2, lo=0.02, hi=1.0), blocks=blocks))
     if not out["levels"]:
         c.err("tower", "at least one [[tower.levels]] entry is needed")
+    return out
+
+
+def _rings(c: _Checker, raw: dict, robot: dict) -> dict:
+    """[rings]: Ring on pegs: the rings, their holders and pegs, the rules' tolerances, the levels."""
+    w = "rings"
+    c.keys(raw, w, ("outer_diameter", "thickness", "segments", "mass", "friction", "holder_post", "holder_spacing",
+                    "holder_base", "peg_radius", "peg_length", "peg_friction", "peg_plate", "held_lift",
+                    "held_distance", "on_peg_margin", "rest_speed", "check_hz", "rotation", "view_eye", "view_look_at",
+                    "rings", "levels"))
+    out = dict(outer_diameter=c.num(raw, "outer_diameter", w, 0.10, lo=0.04, hi=0.3),
+               thickness=c.num(raw, "thickness", w, 0.014, lo=0.004, hi=0.05),
+               segments=c.num(raw, "segments", w, 28, lo=8, hi=96, integer=True),
+               mass=c.num(raw, "mass", w, 0.03, lo=0.002, hi=1.0),
+               friction=c.vec(raw, "friction", w, 3, [1.2, 0.02, 0.001], lo=0.0),
+               holder_post=c.vec(raw, "holder_post", w, 3, [0.007, 0.007, 0.035], lo=0.002),
+               holder_spacing=c.vec(raw, "holder_spacing", w, 2, [0.025, 0.05], lo=0.005),
+               holder_base=c.vec(raw, "holder_base", w, 3, [0.045, 0.11, 0.004], lo=0.001),
+               peg_radius=c.num(raw, "peg_radius", w, 0.008, lo=0.002, hi=0.05),
+               peg_length=c.num(raw, "peg_length", w, 0.11, lo=0.02, hi=0.4),
+               peg_friction=c.vec(raw, "peg_friction", w, 3, [0.6, 0.005, 0.0001], lo=0.0),
+               peg_plate=c.vec(raw, "peg_plate", w, 3, [0.07, 0.07, 0.008], lo=0.001),
+               held_lift=c.num(raw, "held_lift", w, 0.02, lo=0.002, hi=0.2),
+               held_distance=c.num(raw, "held_distance", w, 0.08, lo=0.01, hi=0.3),
+               on_peg_margin=c.num(raw, "on_peg_margin", w, 0.006, lo=0.0, hi=0.05),
+               rest_speed=c.num(raw, "rest_speed", w, 0.03, lo=0.001, hi=1.0),
+               check_hz=c.num(raw, "check_hz", w, 20, lo=1, hi=100),
+               rotation=c.text(raw, "rotation", w, "full", ("none", "yaw", "full")),
+               view_eye=c.vec(raw, "view_eye", w, 3, [-0.30, 0.25, 1.65]),
+               view_look=c.vec(raw, "view_look_at", w, 3, [0.55, 0.27, 0.76]), rings=[], levels=[])
+    r_mid = out["outer_diameter"] / 2 - out["thickness"] / 2
+    hole = r_mid - out["thickness"] / 2
+    if hole <= out["peg_radius"] + 0.005:
+        c.err("rings.peg_radius", f"the ring's hole (radius {hole * 100:.1f} cm) must be clearly bigger than the peg "
+                                  f"(radius {out['peg_radius'] * 100:.1f} cm)")
+    if out["holder_spacing"][0] - out["holder_post"][0] <= out["thickness"]:
+        c.err("rings.holder_spacing", "the holder's posts must leave room for the ring's tube between them")
+    reach = ROBOTS.get(robot["model"], {"reach": 0.85})["reach"]
+    base = robot["base"]
+    for i, r in enumerate(raw.get("rings", []) or []):
+        wr = f"rings.rings[{i + 1}]"
+        if not c.keys(r, wr, ("name", "color", "ring", "peg", "peg_height", "peg_tilt_deg", "peg_yaw_deg"),
+                      required=("ring", "peg")):
+            continue
+        ring = c.vec(r, "ring", wr, 2, [0.42, 0.0])
+        peg = c.vec(r, "peg", wr, 2, [0.72, 0.0])
+        height = c.num(r, "peg_height", wr, 0.1, lo=0.0, hi=0.4)
+        tilt = c.num(r, "peg_tilt_deg", wr, 45, lo=0, hi=90)
+        for name, xy in (("ring", ring), ("peg", peg)):
+            d = math.hypot(xy[0] - base[0], xy[1] - base[1])
+            if not (TABLE_X[0] + 0.05 < xy[0] < TABLE_X[1] - 0.05 and TABLE_Y[0] + 0.05 < xy[1] < TABLE_Y[1] - 0.05):
+                c.err(f"{wr}.{name}", f"{xy} is not on the table")
+            elif d < 0.35 or d > reach:
+                c.err(f"{wr}.{name}", f"{xy} is {d:.2f} m from the robot's base: keep it 0.35-{reach:.2f} m "
+                                      "(closer, the arm must fold up to reach down)")
+        if tilt > 30 and height < 0.04:
+            c.err(f"{wr}.peg_height", f"a peg tilted {tilt:.0f} degrees needs a post (at least 4 cm): the ring "
+                                      "would hit the table")
+        out["rings"].append(dict(name=c.text(r, "name", wr, f"ring{i + 1}"), rgba=_color(c, r.get("color", "#d9d9d9"), f"{wr}.color"),
+                                 ring=ring, peg=peg, height=height, tilt=math.radians(tilt),
+                                 yaw=math.radians(c.num(r, "peg_yaw_deg", wr, 180, lo=-360, hi=360))))
+    if not out["rings"]:
+        c.err("rings", "at least one [[rings.rings]] entry is needed")
+    for i, lv in enumerate(raw.get("levels", []) or []):
+        wl = f"rings.levels[{i + 1}]"
+        if not c.keys(lv, wl, ("key", "title", "text", "scored", "time_limit_s", "target_rounds", "end_after_rounds"),
+                      required=("key", "title")):
+            continue
+        out["levels"].append(dict(key=c.text(lv, "key", wl, f"rings{i}"), title=c.text(lv, "title", wl, ""),
+                                  text=c.text(lv, "text", wl, ""), scored=c.flag(lv, "scored", wl, True),
+                                  limit=float(c.num(lv, "time_limit_s", wl, 300, lo=10, hi=3600)),
+                                  target_rounds=c.num(lv, "target_rounds", wl, 3, lo=1, hi=50, integer=True),
+                                  end_after_rounds=c.num(lv, "end_after_rounds", wl, 0, lo=0, hi=50, integer=True),
+                                  rotation=out["rotation"]))
+    if not out["levels"]:
+        c.err("rings", "at least one [[rings.levels]] entry is needed")
     return out

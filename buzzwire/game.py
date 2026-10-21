@@ -86,8 +86,10 @@ class BuzzWireGame(RobotGame):
         mujoco.mju_mat2Quat(gq, (Rw @ SC.GRIP_IN_WAND).flatten())
         q = np.array(cfg.robot["home"], float)
         d.qvel[self.sc.arm_dof] = 0
-        for _ in range(600):
+        for k in range(600):                               # (until it has converged)
             q = self.ik.step(q, pinch, gq, 0.01)
+            if k % 20 == 19 and np.linalg.norm(self.ik.fk(q)[0] - pinch) < 1e-4:
+                break
         err = float(np.linalg.norm(self.ik.fk(q)[0] - pinch))
         if err > 0.003:
             raise RuntimeError(f"level {lv.key}: the robot can't reach the wand's start ({err * 1000:.0f} mm off)")

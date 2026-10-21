@@ -1,7 +1,7 @@
 """Robot Buzz Wire: the development server (one game, fixed addresses). The simulation runs here
 in real time; browsers only show it and send controller input.
 
-    python -m buzzwire.server [--port 8000] [--levels straight curves]
+    python -m buzzwire.server [--port 8000] [--game cubes] [--levels pick shapes]
 
     /            the games: a menu (Buzz Wire, Cube Tasks, Tower), the 3D view, the HUD, the QR code
     /phone       the Android phone controller (touch joysticks, or motion tracking)
@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import gzip
+import hashlib
 import io
 import json
 import time
@@ -30,10 +32,11 @@ from vrteleop.webscene import export_scene
 
 from . import config as C
 from .cubes import CubesGame
-from .game import BuzzWireGame
 from .tower import TowerGame
+from .rings import RingsGame
 from . import candidates as CAND
 from .session import Session
+from .jitter import Jitter
 
 NOT_FOUND = ("<!doctype html><meta name=viewport content='width=device-width'><body style='font:16px system-ui;"
              "background:#0b0d12;color:#eee;display:grid;place-items:center;height:100vh;margin:0'>"
@@ -41,9 +44,9 @@ NOT_FOUND = ("<!doctype html><meta name=viewport content='width=device-width'><b
              "link in your invitation e-mail, or contact us.</p></div>")
 
 GAMES = {   # key: (class, title, one line for the menu)
-    "wire": (BuzzWireGame, "Buzz Wire", "Slide the ring along the wire without touching it."),
     "cubes": (CubesGame, "Cube Tasks", "Pick up cubes and shapes: into squares, outlines and bins."),
     "tower": (TowerGame, "Tower", "Stack blocks as high as you can without the tower falling."),
+    "rings": (RingsGame, "Ring on pegs", "Tilt each ring onto the leaning peg of its colour, round after round."),
 }
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,13 +69,53 @@ def _plain(o):
 def dumps(obj) -> str:
     return json.dumps(obj, default=_plain)
 STATUS_EVERY = 10
+SLOW_TICK = 0.03               # [s] a control tick that takes longer than this is logged
+
+
+class Client:
+    """One open connection and its own sender task. The simulation only drops the newest pose
+    packet and status into its two slots (never waits); the sender sends whatever is newest. A
+    slow reader (a background tab, a bad network) just misses frames: it can never hold up the
+    simulation or the other connections."""
+
+    def __init__(self, ws: web.WebSocketResponse, who: str):
+        self.ws, self.who = ws, who
+        self.poses = who == "browser"        # (the phones don't use the robot's poses: not sent)
+        self.hidden = False                  # the page says it's hidden (a background tab): no poses
+        self.pose: bytes | None = None
+        self.text: str | None = None
+        self.ready = asyncio.Event()
+        self.task = asyncio.create_task(self._send())
+
+    def offer(self, msg):
+        if isinstance(msg, bytes):
+            if not self.poses or self.hidden:
+                return
+            self.pose = msg
+        else:
+            self.text = msg
+        self.ready.set()
+
+    async def _send(self):
+        try:
+            while not self.ws.closed:
+                await self.ready.wait()
+                self.ready.clear()
+                text, self.text = self.text, None
+                pose, self.pose = self.pose, None
+                if text is not None:
+                    await self.ws.send_str(text)
+                if pose is not None:
+                    await self.ws.send_bytes(pose)
+        except (ConnectionResetError, RuntimeError, asyncio.CancelledError):
+            pass
 
 
 class Server:
     def __init__(self, args):
         self.args = args
         self.cfg = C.load()
-        self.clients: set[web.WebSocketResponse] = set()
+        self.clients: dict[web.WebSocketResponse, Client] = {}   # every open connection, with its sender
         self.counts: dict = {}                # per connection: messages seen (for the log)
         self.phone_seen = 0.0                 # when the phone last sent its pose
         self.phone_msg = 0.0                  # when the phone last sent anything (with or without a pose)
@@ -82,13 +125,19 @@ class Server:
         self._game = None                     # the game chosen in the menu (None: the menu)
         self.session = None                   # a candidate's test (session.py); its game is shown instead
         self.view_yaw = 0.0
+        self.view_dist = None
         self.controls = "touch"               # what the phone says it uses: motion, tilt, touch
+        self.assets: dict[str, bytes] = {}   # meshes by their fingerprint (gzipped JSON)
+        self.bodies, self.scene_gz = [], gzip.compress(b'{"bodies": [], "geoms": [], "meshes": [], "materials": [], "textures": [], "flexes": []}')
+        self.jitter = Jitter(self.cfg.controls["jitter_buffer"], self.cfg.controls["jitter_buffer_max"])   # the phone's messages, played back evenly
+        self.input_t = None                   # when the last controller message came
+        self.stale = False                    # none for input_timeout_s: MOVE counts as released
         self.kind = None
         if args.game:
             self.new_game(args.game)
 
     def new_game(self, kind: str | None = None):
-        """Start a game (kind: wire, cubes, tower; None: the current one again)."""
+        """Start a game (kind: a key of GAMES; None: the current one again)."""
         kind = kind or self.kind
         if kind not in GAMES:
             return
@@ -98,6 +147,7 @@ class Server:
         self._game = GAMES[kind][0](self.cfg, levels=levels, out_dir=out, player=self.args.player)
         self.kind = kind
         self.game.view_yaw = self.view_yaw            # (the screen's camera heading, for the phone's "forward")
+        self.game.view_dist = self.view_dist
         self._export()
         print(f"[game] {GAMES[kind][1]}", flush=True)
 
@@ -124,8 +174,22 @@ class Server:
         return True
 
     def _export(self):
+        """The level's geometry for the browsers. The meshes (the robot's: the same every level) are
+        sent once each under their content's fingerprint (/asset/<key>, cached by the browser for
+        good); the scene itself only refers to them. The model's textures are left out (the game
+        page has its own materials). Was ~4.5 MB to every browser at every level change."""
         g = self.game
-        self.bodies, self.scene_gz = export_scene(g.m)
+        g.view_yaw, g.view_dist = self.view_yaw, self.view_dist   # (a new game: the screen's view as it is)
+        self.bodies, payload = export_scene(g.m, textures=False, compress=False)
+        refs = []
+        for mesh in payload["meshes"]:
+            raw = json.dumps(mesh).encode()
+            key = hashlib.blake2b(raw, digest_size=12).hexdigest()
+            if key not in self.assets:
+                self.assets[key] = gzip.compress(raw, 5)
+            refs.append({"ref": key})
+        payload["meshes"] = refs
+        self.scene_gz = gzip.compress(json.dumps(payload).encode(), 5)
         self.scene_id += 1
         self._level = (id(g), g.li, id(g.sc))
 
@@ -155,12 +219,28 @@ class Server:
         while True:
             g = self.game
             if g is None:                             # the menu, or a candidate between tasks: only the status
-                await self.broadcast(dumps(self.status()))
+                self.broadcast(dumps(self.status()))
                 await asyncio.sleep(0.1)
                 t0, tick0, rtf_t, rtf_w = time.perf_counter(), 0, 0, time.perf_counter()
                 continue
+            # let the network in every tick, also when behind (otherwise the phone's messages wait
+            # until the loop has caught up, and the "no messages" rule below fires on a phone that
+            # was sending all along)
+            await asyncio.sleep(0)
+            work0 = time.perf_counter()
             if (id(g), g.li, id(g.sc)) != self._level:
                 self._export()                        # a new level or game: new geometry for the browsers
+            # no controller message for input_timeout_s (the phone froze, the network stalled): MOVE
+            # counts as released, the arm holds still; when messages come back the clutch takes a new
+            # anchor, so the arm doesn't jump to wherever the phone is now (as vrteleop/server.py)
+            if self.input_t is not None and time.perf_counter() - self.input_t > self.cfg.controls["input_timeout"]:
+                if not self.stale:
+                    self.stale = True
+                    self.jitter.reset()
+                    print("[input] no controller messages: MOVE released", flush=True)
+                g.set_input({})
+            elif self.jitter.msgs:
+                g.set_input({"right": self.jitter.sample()})
             if self.session is not None:
                 stage = self.session.stage
                 self.session.tick()                   # (steps the task's game; moves the test along)
@@ -173,19 +253,23 @@ class Server:
             else:
                 g.step()
             tick0 += 1
+            work = time.perf_counter() - work0
+            if work > SLOW_TICK:
+                print(f"[loop] a slow tick: {work * 1000:.0f} ms", flush=True)
             if tick0 % POSE_EVERY == 0:
-                await self.broadcast(self.pose_packet())
+                self.broadcast(self.pose_packet())
             if tick0 % STATUS_EVERY == 0:
                 now = time.perf_counter()
                 if now - rtf_w > 1.0:
                     self.rtf = (tick0 - rtf_t) * dt / (now - rtf_w)
                     rtf_w, rtf_t = now, tick0
-                await self.broadcast(dumps(self.status()))
+                self.broadcast(dumps(self.status()))
             # keep to real time (if behind, catch up without sleeping)
             wait = t0 + tick0 * dt - time.perf_counter()
             if wait > 0:
                 await asyncio.sleep(wait)
             elif wait < -0.25:
+                print(f"[loop] {-wait * 1000:.0f} ms behind real time: resync", flush=True)
                 t0, tick0 = time.perf_counter(), 0   # (far behind, e.g. after a level build: resync)
                 rtf_t = 0
                 rtf_w = time.perf_counter()
@@ -228,18 +312,10 @@ class Server:
             return dict(kind="none", scene_id=self.scene_id, table_z=C.TABLE_Z)
         return dict(self.game.level_geometry(), scene_id=self.scene_id, table_z=C.TABLE_Z)
 
-    async def broadcast(self, msg):
-        dead = []
-        for ws in self.clients:
-            try:
-                if isinstance(msg, bytes):
-                    await ws.send_bytes(msg)
-                else:
-                    await ws.send_str(msg)
-            except (ConnectionResetError, RuntimeError):
-                dead.append(ws)
-        for ws in dead:
-            self.clients.discard(ws)
+    def broadcast(self, msg):
+        """Offer a message to every connection (never waits: each has its own sender)."""
+        for c in list(self.clients.values()):
+            c.offer(msg)
 
     # ---------------------------------------------------------------- web
     def app(self) -> web.Application:
@@ -248,7 +324,7 @@ class Server:
         @web.middleware
         async def no_cache(request, handler):
             resp = await handler(request)
-            if "/vendor/" not in request.path and "/assets/" not in request.path:
+            if not request.path.startswith(("/vendor/", "/assets/", "/asset/")):
                 resp.headers["Cache-Control"] = "no-cache"
             return resp
         app.middlewares.append(no_cache)
@@ -267,7 +343,8 @@ class Server:
                                                              "Content-Encoding": "gzip"})
 
         async def config(_):
-            return web.json_response(dict(self.cfg.public(), phone_url=self.phone_url(),
+            return web.json_response(dict(self.cfg.public(), tasks=len(self.cfg.games["flow"]["assessment"]),
+                                          phone_url=self.phone_url(),
                                           iphone_url=self.phone_url("/iphone")))
 
         async def qr(request):
@@ -281,11 +358,11 @@ class Server:
         async def ws_handler(request):
             ws = web.WebSocketResponse(heartbeat=15, max_msg_size=1 << 20)
             await ws.prepare(request)
-            self.clients.add(ws)
             ua = request.headers.get("User-Agent", "")
             who = "phone" if "Android" in ua else "iphone" if ("iPhone" in ua or "iPad" in ua) else "browser"
+            self.clients[ws] = Client(ws, who)
             print(f"[ws] {who} connected ({len(self.clients)} open)", flush=True)
-            await ws.send_str(dumps(self.status()))
+            self.clients[ws].offer(dumps(self.status()))
             self.counts[ws] = {"in": 0, "fps": 0}
             try:
                 async for msg in ws:
@@ -300,7 +377,9 @@ class Server:
                     except Exception:                    # one bad message must not drop the connection
                         print(f"[error] message {str(m)[:120]}:\n{traceback.format_exc()}", flush=True)
             finally:
-                self.clients.discard(ws)
+                c = self.clients.pop(ws, None)
+                if c is not None:
+                    c.task.cancel()
                 self.counts.pop(ws, None)
                 print(f"[ws] {who} disconnected", flush=True)
             return ws
@@ -384,9 +463,34 @@ class Server:
 
         app.router.add_get("/admin", local_only(admin_page))
         app.router.add_get("/admin/api", local_only(admin_api))
+
+        async def admin_candidate(request):          # one candidate: every attempt's full results
+            code = request.match_info["code"].upper()
+            c = CAND.get(code)
+            if c is None:
+                raise web.HTTPNotFound()
+            attempts = []
+            folder = CAND.folder(code)
+            for f in sorted(folder.glob("*/results.json"), reverse=True) if folder.exists() else []:
+                try:
+                    attempts.append(dict(json.loads(f.read_text(encoding="utf-8")), folder=f.parent.name))
+                except (OSError, json.JSONDecodeError):
+                    continue
+            running = self.session is not None and self.session.code == code
+            return web.json_response(dict(code=code, name=c.get("name"), email=c.get("email"), controls=c.get("controls"),
+                                          running=running, attempts=attempts, games={k: v[1] for k, v in GAMES.items()}))
+        app.router.add_get("/admin/api/candidate/{code}", local_only(admin_candidate))
         app.router.add_post("/admin/candidates", local_only(admin_new))
         app.router.add_post("/admin/candidates/{code}/controls", local_only(admin_controls))
         app.router.add_get("/scene.json", scene)
+
+        async def asset(request):                    # a mesh, by its content's fingerprint: never changes
+            body = self.assets.get(request.match_info["key"])
+            if body is None:
+                raise web.HTTPNotFound()
+            return web.Response(body=body, headers={"Content-Type": "application/json", "Content-Encoding": "gzip",
+                                                    "Cache-Control": "public, max-age=31536000, immutable"})
+        app.router.add_get("/asset/{key}", asset)
         app.router.add_get("/config.json", config)
         app.router.add_get("/level.json", level)
         app.router.add_get("/qr.svg", qr)
@@ -409,26 +513,42 @@ class Server:
         """One message from a browser or the phone."""
         t, n = m.get("type"), self.counts.setdefault(ws, {"in": 0, "fps": 0})
         if t == "input":
-            if self.game is not None:                # (the menu: no robot to move)
+            now = time.perf_counter()
+            if self.input_t is not None:                 # (for the log: how evenly the phone's messages come)
+                gap = now - self.input_t
+                n["gap"] = max(n.get("gap", 0.0), gap)
+                if self.stale:
+                    print(f"[input] messages again after {gap:.2f} s", flush=True)
+            self.input_t, self.stale = now, False
+            if isinstance(m.get("t"), (int, float)) and self.jitter.delay > 0:
+                self.jitter.push(float(m["t"]), m.get("right"))     # (played back evenly by run())
+            elif self.game is not None:              # (the menu: no robot to move)
                 self.game.set_input(m)
             if self.session is not None and who in ("phone", "iphone") and not self.session.res.get("device"):
                 self.session.res["device"] = "iPhone" if who == "iphone" else "Android"
             self.phone_msg = time.perf_counter()
-            if (m.get("right") or {}).get("pose"):
+            if (m.get("right") or {}).get("pose") and (m.get("right") or {}).get("tracked", True):
                 self.phone_seen = time.perf_counter()
             n["in"] += 1
             if n["in"] in (1, 100) or n["in"] % 1000 == 0:
                 c = m.get("right") or {}
                 print(f"[input] {who}: {n['in']} messages; MOVE {c.get('grip')} GRAB {c.get('stick')} "
-                      f"{'menu' if self.game is None else self.game.state}", flush=True)
+                      f"{'menu' if self.game is None else self.game.state}; longest gap {n.get('gap', 0) * 1000:.0f} ms", flush=True)
+                n["gap"] = 0.0
         elif t == "view":
             self.view_yaw = float(m.get("yaw", 0.0))
+            self.view_dist = float(m["dist"]) if isinstance(m.get("dist"), (int, float)) else None
             if self.game is not None:
                 self.game.view_yaw = self.view_yaw
+                self.game.view_dist = self.view_dist
+        elif t == "visible":                         # the game screen is shown / hidden (a background tab)
+            if ws in self.clients:
+                self.clients[ws].hidden = not m.get("on", True)
         elif t == "fps":                             # the game screen's frame rate, for the log
             n["fps"] += 1
             if n["fps"] % 6 == 1:
-                print(f"[fps] {who}: {m.get('fps')} fps, quality {m.get('quality')}, {m.get('gpu', '')}", flush=True)
+                print(f"[fps] {who}: {m.get('fps')} fps, quality {m.get('quality')}, display buffer {m.get('delay_ms')} ms, "
+                      f"{m.get('gpu', '')}", flush=True)
         elif t == "ping":
             await ws.send_str(json.dumps({"type": "pong", "t": m.get("t")}))
         elif t == "restart":
@@ -466,6 +586,10 @@ def main():
     ap.add_argument("--player", default="dev")
     a = ap.parse_args()
     srv = Server(a)
+    t = time.perf_counter()                       # warm up: build each game once (textures, caches), so
+    for cls, _, _ in GAMES.values():              # the first level in a test doesn't take half a second
+        cls(srv.cfg)
+    print(f"[start] games warmed up in {time.perf_counter() - t:.1f} s", flush=True)
     print(f"\n  Robot Buzz Wire: http://localhost:{a.port}   phone: {srv.phone_url() or '(no tunnel)'}\n", flush=True)
     web.run_app(srv.app(), host=a.host, port=a.port, print=None)
 

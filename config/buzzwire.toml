@@ -23,26 +23,36 @@ base = [0.0, 0.0]              # where its base stands on the table [x, y]
 # start pose (shoulder pan, shoulder lift, elbow, wrist 1, 2, 3): gripper pointing down,
 # about 30 cm in front of the base
 home_deg = [0.0, -100.0, 110.0, -100.0, -90.0, 0.0]
-max_speed = 0.6                # [m/s] top speed of the gripper (a real UR5e can do 1.0)
-max_turn_deg = 180             # [deg/s] top turning speed of the gripper
+max_speed = 0.4                # [m/s] top speed of the gripper, after the smoothing (as in the screening test)
+max_turn_deg = 90              # [deg/s] top turning speed of the gripper
 joint_speed_deg = 180          # [deg/s] top speed of each joint (a UR5e's limit)
-table_clearance = 0.03         # the wrist and gripper keep at least this far above the table [m]
-servo_stiffness = 3.0          # x the UR5e's joint motor stiffness: higher = follows the hand quicker (1: ~130 ms behind, 3: ~90 ms)
+arm_clearance = 0.02           # the forearm and wrist keep at least this far above the table [m]
+finger_clearance = 0.003       # every part of the gripper at least this far (the fingers can reach down to grab)
+servo_stiffness = 1.0          # x the UR5e's joint motor stiffness (1 = the real one; 3 follows a little quicker but is twitchy)
+servo_feedforward = true       # the joint motors also get the commanded velocity (as a real robot's servo):
+                               # they follow without trailing ~0.1 s behind, no stiffer
 
 [controls]
 motion_scale = 1.0             # the robot moves this many cm per cm the phone moves
-# Smoothing of the phone's motion. "one_euro" (adaptive, the usual filter for hand tracking): strong
-# while the hand is slow or still (no shaking from the tracking's noise), weak while it moves fast (no
-# lag), filtering each phone sample once; then a short glide between samples (a phone sends ~30 a
-# second: without it the arm would move in small steps). Measured with phone-like input (30 Hz,
-# 1.5 mm noise): 0.41 mm shake at rest (the old 0.03 s smoothing: 0.84), ~125 ms behind a moving
-# hand, smooth motion.
-filter = "one_euro"
-min_cutoff_hz = 0.3            # how strongly a still hand is smoothed (lower = calmer)
-beta = 10.0                    # how fast the smoothing lets go as the hand speeds up [per m/s] (higher = less lag)
-rot_beta = 2.0                 # the same for turning [per rad/s]
-glide_s = 0.025                # glide between phone samples [s]
-smoothing_s = 0.03             # (filter = "simple": a plain low-pass with this time constant)
+# Smoothing of the phone's motion, as in the screening test (vrteleop/arms.py): "simple" = each
+# control tick the target moves a fraction 1 - exp(-dt / smoothing_s) of the way toward the hand
+# (position and rotation). The same delay at every hand speed, so the robot is predictable; it
+# also evens out the phone's ~30 poses a second and the tracking's small noise.
+filter = "simple"
+smoothing_s = 0.12             # [s] the filter's time constant
+# "one_euro" (adaptive: strong when the hand is still, weak when it moves fast) is still there to
+# try; its delay changes with the hand's speed, which candidates found harder to predict.
+min_cutoff_hz = 0.3            # (one_euro) how strongly a still hand is smoothed (lower = calmer)
+beta = 10.0                    # (one_euro) how fast the smoothing lets go as the hand speeds up [per m/s]
+rot_beta = 2.0                 # (one_euro) the same for turning [per rad/s]
+glide_s = 0.025                # (one_euro) glide between phone samples [s]
+input_timeout_s = 0.35         # no controller message for this long: MOVE counts as released (the arm
+                               # holds still); when messages come back the clutch re-anchors (no jump)
+# A jitter buffer (off, as in the screening test: the 0.12 s smoothing already evens the phone's
+# messages out): keep them with the phone's timestamps and play them back evenly, a little later,
+# just enough to cover how uneven the connection is, between these two. 0 = off.
+jitter_buffer_s = 0.0
+jitter_buffer_max_s = 0.15
 
 # ---------------------------------------------------------------------------- physics
 [physics]
@@ -51,12 +61,27 @@ control_hz = 100               # the arm's target is updated this often
 touch_debounce_s = 0.05        # contact lost for less than this still counts as one touch
 
 # ---------------------------------------------------------------------------- what the player sees
-[view]                         # standing behind the robot, looking over it at the table
-eye = [-0.75, -0.15, 1.95]     # camera position [x, y, z]: behind the robot's base, high
-look_at = [0.50, 0.0, 0.80]    # the point it looks at (the work area)
-fov_deg = 45
-arm_opacity = 0.35             # the arm's big links (shoulder, upper arm, forearm) see-through, so they
-                               # don't hide the work area (1 = solid); the wrist and gripper stay solid
+[view]                         # as in the screening test: from the robot's "head", looking down at the table
+eye = [-0.25, -0.05, 1.65]     # camera position [x, y, z]: just behind the robot's base, at head height
+look_at = [0.50, 0.0, 0.75]    # the point it looks at: the middle of the work area (the board, the cubes)
+fov_deg = 50                   # (adjusted from the screening test's 55 so the work area fills the middle)
+arm_opacity = 0.25             # the arm is drawn solid; its big links (base, shoulder, upper arm, forearm)
+                               # fade to this only while they hide the gripper or the spot below it
+
+[side_view]                    # a small second view in the top-right corner: the gripper from the side,
+enabled = true                 # at table height, so its height above the table is easy to see
+from = "left"                  # the robot's left (or "right")
+size = 0.28                    # its width, as a share of the screen's
+distance = 0.6                 # [m] from the gripper (things nearer the camera than 15 cm short of the
+                               # gripper are cut away, so the arm doesn't block it)
+height = 0.08                  # [m] above the table: where the camera is and looks (it follows the gripper)
+fov_deg = 35
+
+[depth_cues]                   # a ring on the table straight below the gripper and a line down to it
+enabled = true
+grab_height = 0.06             # they turn green when the finger pads are this low (low enough to grab)
+color = "#ffd24a"
+grab_color = "#4cd07d"
 
 # ---------------------------------------------------------------------------- the board, wire and wand
 [board]                        # the wooden base the wire posts stand on
@@ -150,7 +175,6 @@ points = [[0.0, -0.21, 0.13], [0.01, -0.11, 0.155], [-0.01, 0.0, 0.125], [0.01, 
 # =============================================================================================
 [cubes]
 phases = ["pick", "shapes", "sort"]    # practice: cube into the square; task 1: shapes; task 2: sorting
-table_clearance = 0.015                # the gripper may go this low above the table (cubes are 4-6 cm)
 
 # =============================================================================================
 #  Tower: stack blocks as high as you can. Blocks appear one at a time at the supply spot; take
@@ -163,7 +187,6 @@ platform_size = [0.14, 0.14, 0.02]     # [x, y, height]
 supply = [0.42, -0.18]                 # where the next block appears
 block_mass = 0.06                      # [kg] each block
 friction = [1.0, 0.01, 0.001]          # sliding, twisting, rolling (wood on wood)
-table_clearance = 0.015
 
 [[tower.levels]]
 key = "practice"
@@ -211,14 +234,99 @@ blocks = [{ size = [0.10, 0.05, 0.04], color = "#e63946" },
 # =============================================================================================
 #  The candidate's test (one personal link): welcome -> connect the phone -> tutorial ->
 #  practice -> "ready?" (start the assessment, or practise again) -> assessment -> thank you.
-#  Tasks are "game:level" (games: wire, cubes, tower; levels: the keys above, or the phases of
+#  Tasks are "game:level" (games: cubes, tower, rings; levels: the keys above, or the phases of
 #  config/screening.toml for cubes). During the assessment the screen shows only a thin timer.
 # =============================================================================================
 [flow]
-practice = ["wire:straight", "tower:practice"]          # after the tutorial; may be repeated
+practice = ["cubes:pick", "tower:practice", "rings:practice"]   # after the tutorial; may be repeated
 max_practice_rounds = 3                                 # rounds of practice a candidate may do
-assessment = ["cubes:shapes", "cubes:sort", "wire:curves", "tower:cubes"]
+assessment = ["cubes:shapes", "cubes:sort", "tower:cubes", "rings:rings"]
 card_seconds = 8                                        # the task card before each assessment task
 default_controls = "motion"     # a new candidate's controls (the admin can change them per candidate):
                                 # "motion" (move the phone: Android tracking / iPhone tilt), "touch"
                                 # (two joysticks), "choice" (the candidate picks)
+
+# =============================================================================================
+#  Ring on pegs: three rings stand on their edge in small wooden holders in a row in front of the
+#  robot; straight ahead of each, further out, is a peg of the same colour on a grey post. The
+#  pegs lean at different angles, so each ring needs a different tilt of the hand. Take a ring by
+#  the top of its tube, lift it, tilt it so its hole lines up with the peg, slide it on from the
+#  tip, let go. When all three hang on their pegs (and nothing is held) the round counts, the
+#  rings jump back into their holders and the next round starts, until the time is up.
+#  Score 0..100: 80 x min(1, rings hung over all rounds / (3 x target_rounds))
+#              + 20 x grasp efficiency (grasps / GRAB presses, minus 1/3 per drop).
+#  Positions: [x forward, y left] from the robot's base [m]; heights above the table top.
+# =============================================================================================
+[rings]
+outer_diameter = 0.10                  # a ring's outside diameter [m]
+thickness = 0.014                      # its tube's thickness (radius to the tube's middle 0.043, hole radius 0.036)
+segments = 28                          # it's made of this many short overlapping capsules (so it really hangs)
+mass = 0.03                            # [kg] the whole ring
+friction = [1.2, 0.02, 0.001]          # sliding, twisting, rolling (painted plastic on a rubber-tipped gripper)
+holder_post = [0.007, 0.007, 0.035]    # each of a holder's 4 posts [x, y, height]
+holder_spacing = [0.025, 0.05]         # the posts: [across the ring's plane, along it] between their centres
+holder_base = [0.045, 0.11, 0.004]     # the holder's thin base plate (seen only, nothing touches it)
+peg_radius = 0.008
+peg_length = 0.11
+peg_friction = [0.6, 0.005, 0.0001]
+peg_plate = [0.07, 0.07, 0.008]        # the base plate under each peg's post [x, y, thickness]
+held_lift = 0.02                       # a ring this far above where it would rest ...
+held_distance = 0.08                   # ... with its centre this close to the gripper's pinch point = held
+on_peg_margin = 0.006                  # on its peg: the ring's centre within (hole - peg radius + this) of the axis
+rest_speed = 0.03                      # [m/s] a ring hanging slower than this is done
+check_hz = 20                          # the rules are checked this often
+rotation = "full"                      # the gripper tilts and twists with the phone
+# this game's camera (the rings stand to the robot's left): from behind the robot, a little to its
+# left, looking at the middle of the three columns, so none of them sits behind the arm
+view_eye = [-0.30, 0.25, 1.65]
+view_look_at = [0.55, 0.27, 0.76]
+
+# One ring per entry, from the arm's side outward. ring = the ring and its holder
+# [x, y]; peg = [x, y]; peg_height = the post's height (the peg leaves its top; 0 = no post, the
+# peg starts 8 mm above the table); peg_tilt_deg from straight up, toward peg_yaw_deg (180 =
+# pointing back toward the robot). The most tilted peg on the arm's own side, the nearly level one
+# farthest away: a UR5e can't hold the gripper tilted 45 degrees at the far side.
+[[rings.rings]]
+name = "red"
+color = "#db2921"
+ring = [0.42, 0.00]
+peg = [0.72, 0.00]
+peg_height = 0.10
+peg_tilt_deg = 45                      # (turn the ring 45 degrees)
+peg_yaw_deg = 180
+
+[[rings.rings]]
+name = "blue"
+color = "#266be6"
+ring = [0.42, 0.29]
+peg = [0.70, 0.29]
+peg_height = 0.13
+peg_tilt_deg = 60                      # (turn it 30 degrees)
+peg_yaw_deg = 180
+
+[[rings.rings]]
+name = "green"
+color = "#24b34d"
+ring = [0.40, 0.53]
+peg = [0.60, 0.52]
+peg_height = 0.17
+peg_tilt_deg = 80                      # (nearly level: turn it about 10 degrees)
+peg_yaw_deg = 180
+
+[[rings.levels]]
+key = "practice"
+title = "Practice: ring on pegs"
+text = "Take a ring by the top of its tube, lift it, tilt it so the peg straight ahead of it goes through the hole, then let go. Hang all three."
+scored = false
+time_limit_s = 180
+target_rounds = 1
+end_after_rounds = 1                   # the level ends after this many rounds (0: only when the time is up)
+
+[[rings.levels]]
+key = "rings"
+title = "Ring on pegs"
+text = "Hang each ring on the peg straight ahead of it, the same colour. The pegs lean at different angles: tilt the ring with your phone so the peg goes through the hole, then let go. When all three are on, they come back for the next round: as many rounds as you can."
+scored = true
+time_limit_s = 300                     # (5 minutes)
+target_rounds = 3                      # 9 rings hung = full marks for rings
+end_after_rounds = 0

@@ -21,12 +21,12 @@ import numpy as np
 
 from .config import Config
 from .cubes import CubesGame
-from .game import BuzzWireGame
 from .tower import TowerGame
+from .rings import RingsGame
 from .tutorial import TutorialGame
 
-GAME_CLASSES = {"wire": BuzzWireGame, "cubes": CubesGame, "tower": TowerGame}
-GAME_NAMES = {"wire": "Buzz Wire", "cubes": "Cube Tasks", "tower": "Tower"}
+GAME_CLASSES = {"cubes": CubesGame, "tower": TowerGame, "rings": RingsGame}
+GAME_NAMES = {"cubes": "Cube Tasks", "tower": "Tower", "rings": "Ring on pegs"}
 
 
 class Session:
@@ -122,7 +122,7 @@ class Session:
         if not g.finished:
             return
         key = f"{self.task[0]}:{self.task[1]}"
-        result = next(iter(g.results.values()), {})
+        result = dict(next(iter(g.results.values()), {}), game=self.task[0], title=g.level.title)
         if self.stage == "tutorial":
             self.res["tutorial"] = result
             self._practice_round()

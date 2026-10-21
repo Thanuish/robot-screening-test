@@ -28,6 +28,7 @@ const cfg = await (await fetch('/config.json')).json();
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.autoUpdate = false;                   // (updated once per frame in the frame loop)
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
@@ -58,17 +59,20 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 new RGBELoader().load('/assets/studio_small_08_1k.hdr', (hdr) => {
   hdr.mapping = THREE.EquirectangularReflectionMapping;
   scene.environment = pmrem.fromEquirectangular(hdr).texture;
-  scene.environmentIntensity = 0.75;
+  scene.environmentIntensity = 0.5;        // (less flat fill light: the shadows stay dark and clear)
   hdr.dispose();
 });
-const key = new THREE.DirectionalLight(0xfff4e6, 2.6);
-key.position.copy(toWorld([1.3, -0.9, 2.6]));
+// nearly straight above the table (like the ceiling lights): a shadow falls right below the
+// gripper and whatever it holds, the clearest cue for how high they are
+const key = new THREE.DirectionalLight(0xfff4e6, 3.0);
+key.position.copy(toWorld([0.52, -0.08, 2.9]));
 key.target.position.copy(toWorld([0.45, 0, 0.8]));
 key.castShadow = true;
-Object.assign(key.shadow.camera, { left: -0.9, right: 0.9, top: 0.9, bottom: -0.9, near: 0.5, far: 5 });
-key.shadow.bias = -0.0002; key.shadow.normalBias = 0.01; key.shadow.radius = 4;
+// the shadow map covers just the bench (finer shadows), sharp-edged near contact
+Object.assign(key.shadow.camera, { left: -0.75, right: 0.75, top: 0.75, bottom: -0.75, near: 0.5, far: 5 });
+key.shadow.bias = -0.0002; key.shadow.normalBias = 0.008; key.shadow.radius = 2;
 scene.add(key, key.target);
-const fill = new THREE.HemisphereLight(0xcfe0ff, 0x2a2018, 0.35);
+const fill = new THREE.HemisphereLight(0xcfe0ff, 0x2a2018, 0.25);
 scene.add(fill);
 
 // ------------------------------------------------------------ materials and textures
@@ -131,6 +135,17 @@ function box(w, d, h, mat, pos, radius = 0) {
   box(1.1, 1.5, 0.04, M.bench, [0.4, 0, 0.73], 0.006);
   for (const [sx, sy] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) box(0.045, 0.045, 0.71, M.alu, [0.4 + sx * 0.5, sy * 0.7, 0.355], 0.004);
   for (const sy of [-1, 1]) box(1.0, 0.03, 0.03, M.alu, [0.4, sy * 0.7, 0.15], 0.004);
+  // a faint 10 cm grid on the bench top: its lines shrink with distance, which shows depth
+  const W = 1.0, D = 1.4, PX = 2048, c = document.createElement('canvas');
+  c.width = Math.round(PX * W / D); c.height = PX;
+  const g = c.getContext('2d'), sx = c.width / W, sy = c.height / D;
+  g.fillStyle = 'rgba(40,60,90,0.18)';
+  for (let i = 0; i <= W / 0.1 + 1e-6; i++) g.fillRect(Math.round(i * 0.1 * sx) - 1, 0, 3, c.height);
+  for (let j = 0; j <= D / 0.1 + 1e-6; j++) g.fillRect(0, Math.round(j * 0.1 * sy) - 1, c.width, 3);
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy(); tex.colorSpace = THREE.SRGBColorSpace;
+  const grid = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  grid.position.set(0.4, 0, 0.7505); grid.renderOrder = 1; mj.add(grid);
 }
 
 // ------------------------------------------------------------ the level (static: board, posts, wire)
@@ -200,9 +215,19 @@ function geometry(g, meshes) {
   return null;
 }
 const matCache = new Map();
+const RING_SEG = /^ring_(\d+)_(\d+)$/;
+const plastics = new Map();
+function plasticOf(rgba) {                    // glossy painted plastic (the rings and their pegs)
+  const key = rgba.map(x => x.toFixed(3)).join(',');
+  if (!plastics.has(key)) plastics.set(key, new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(rgba[0], rgba[1], rgba[2]).convertSRGBToLinear(), roughness: 0.28, clearcoat: 0.8, clearcoatRoughness: 0.12 }));
+  return plastics.get(key);
+}
 function materialFor(g, mats) {
   const name = g.mat >= 0 ? mats[g.mat].name : '';
   if (ROBOT[name]) return ROBOT[name];
+  if (name === 'metal') return M.alu;                    // posts and plates: brushed light-grey metal
+  if (/^peg_\d+$/.test(g.name)) return plasticOf(g.rgba);
   if (g.name.startsWith('fork_')) return M.rubberBlack;
   if (name === 'wood' || name === 'screen_wood' || g.name === 'tower_platform') return M.wood;
   const rgba = g.mat >= 0 ? mats[g.mat].rgba : g.rgba;
@@ -233,8 +258,27 @@ function wand(L) {
   for (const m of [loop, stem, ferrule, handle, cap]) { m.castShadow = m.receiveShadow = true; g.add(m); }
   return g;
 }
+let viewOf = null;                         // the game whose own camera is in use (null: [view])
+const meshAssets = new Map();
+function meshAsset(key) {
+  if (!meshAssets.has(key)) meshAssets.set(key, fetch('/asset/' + key).then(r => r.json()));
+  return meshAssets.get(key);
+}
 async function loadScene(id) {
-  const [j, L] = await Promise.all([(await fetch('/scene.json?v=' + id)).json(), buildLevel()]);
+  let j, L;
+  try {
+    [j, L] = await Promise.all([(await fetch('/scene.json?v=' + id)).json(), buildLevel()]);
+  } catch (e) {                                   // (try again with the next update: never stay blank)
+    if (pendingScene === id) pendingScene = -1;
+    return;
+  }
+  // the meshes come by their fingerprint, each fetched once and then from the browser's cache
+  j.meshes = await Promise.all(j.meshes.map(m => m.ref ? meshAsset(m.ref) : m));
+  // a game may bring its own camera ([rings] view_eye / view_look_at); the others use [view]
+  const v = L.view || cfg.view;
+  home.pos.copy(toWorld(v.eye)); home.target.copy(toWorld(v.look));
+  if (L.view || viewOf !== null) { camera.position.copy(home.pos); controls.target.copy(home.target); controls.update(); }
+  viewOf = L.view ? L.kind : null;
   if (simRoot) mj.remove(simRoot);
   simRoot = new THREE.Group();
   bodies = j.bodies.map((name) => {
@@ -242,57 +286,188 @@ async function loadScene(id) {
     if (name === 'wand') b.add(wand(L));
     return b;
   });
-  // the arm's big links see-through ([view] arm_opacity), so they don't hide the work area
-  const SEE_THROUGH = /^ur_(shoulder_link|upper_arm_link|forearm_link|base)$/;
-  const ghost = new Map();
-  const ghostOf = (m) => {
-    if (!ghost.has(m)) { const c = m.clone(); c.transparent = true; c.opacity = cfg.view.arm_opacity ?? 1; c.depthWrite = false; ghost.set(m, c); }
-    return ghost.get(m);
-  };
+  // The arm is solid (shading and occlusion are strong depth cues). Its big links fade out
+  // smoothly only while they hide the gripper or the spot below it (updateLinks).
+  links = [];
+  const linkOf = new Map();
   for (const g of j.geoms) {
     if (SKIP.test(g.name) || g.type === 'plane') continue;
+    const seg = RING_SEG.exec(g.name);
+    if (seg) {                                           // a ring: drawn once, as a smooth torus
+      if (seg[2] === '0' && L.kind === 'rings') {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(L.r_mid, L.tube, 20, 72), plasticOf(g.rgba));
+        ring.castShadow = ring.receiveShadow = true;
+        bodies[g.body].add(ring);
+      }
+      continue;
+    }
     const geo = geometry(g, j.meshes);
     if (!geo) continue;
-    let mat = materialFor(g, j.materials);
-    const seeThrough = SEE_THROUGH.test(j.bodies[g.body]) && (cfg.view.arm_opacity ?? 1) < 1;
-    if (seeThrough) mat = ghostOf(mat);
+    const mat = materialFor(g, j.materials);
+    const name = j.bodies[g.body];
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(...g.pos);
     mesh.quaternion.set(g.quat[1], g.quat[2], g.quat[3], g.quat[0]);
-    mesh.castShadow = !seeThrough; mesh.receiveShadow = true;
-    if (seeThrough) mesh.renderOrder = 2;
+    mesh.castShadow = mesh.receiveShadow = true;
     bodies[g.body].add(mesh);
+    if (FADING.test(name)) {
+      if (!linkOf.has(g.body)) {
+        const L = { body: bodies[g.body], box: new THREE.Box3(), meshes: [], solid: [], ghost: [], fade: 1 };
+        linkOf.set(g.body, L); links.push(L);
+      }
+      const L = linkOf.get(g.body), gm = mat.clone();
+      gm.transparent = true; gm.depthWrite = true;                // (its own inside stays hidden)
+      L.meshes.push(mesh); L.solid.push(mat); L.ghost.push(gm);
+      geo.computeBoundingBox();                                   // the link's box, in its own frame
+      L.box.union(geo.boundingBox.clone().applyMatrix4(new THREE.Matrix4().compose(mesh.position, mesh.quaternion, mesh.scale)));
+    }
   }
   mj.add(simRoot);
   gripBody = j.bodies.indexOf('ur_gripper_base');
+  pads = [j.bodies.indexOf('ur_gripper_right_pad'), j.bodies.indexOf('ur_gripper_left_pad')];
   sceneId = id;
   $('loading').style.opacity = 0;
   setTimeout(() => $('loading').classList.add('hidden'), 700);
 }
 
-// ------------------------------------------------------------ depth cue: where the gripper would come down
-// A ring on the table straight below the gripper's fingertips and a thin line down to it; green when
-// the fingers are low enough to grab (no shadows are needed to judge the height).
+// ------------------------------------------------------------ the arm: solid, faded only where it hides the gripper
+const FADING = /^ur_(base|shoulder_link|upper_arm_link|forearm_link)$/;   // the big links
+const FADED = cfg.view.arm_opacity ?? 0.25;           // a link's opacity while it hides the gripper
+let links = [];
+const AROUND = [[0.08, 0], [-0.08, 0], [0, 0.08], [0, -0.08]];
+const _ray = new THREE.Ray(), _inv = new THREE.Matrix4(), _hitP = new THREE.Vector3();
+const _r0 = new THREE.Vector3(), _r1 = new THREE.Vector3();
+function updateLinks() {
+  if (!links.length || gripBody < 0 || !bodies[gripBody]) return;
+  // rays from the camera to the gripper, to the spot on the table below it, halfway between, and
+  // to the table 8 cm around that spot (whatever the gripper is about to reach): a link any of them
+  // passes through fades; the others become solid again (smoothly)
+  padsPoint(_p);
+  const targets = [[_p.x, _p.y, _p.z], [_p.x, _p.y, TZ], [_p.x, _p.y, (_p.z + TZ) / 2]];
+  for (const [dx, dy] of AROUND) targets.push([_p.x + dx, _p.y + dy, TZ]);
+  // (each ray is tested against each link's box, in the link's frame: a few cheap tests a frame)
+  const hit = new Set();
+  camera.getWorldPosition(_r0);
+  for (const L of links) {
+    _inv.copy(L.body.matrixWorld).invert();
+    for (const t of targets) {
+      _r1.set(...t).applyMatrix4(mj.matrixWorld);
+      const far = _r0.distanceTo(_r1) - 0.03;
+      _ray.origin.copy(_r0).applyMatrix4(_inv);
+      _ray.direction.copy(_r1).applyMatrix4(_inv).sub(_ray.origin).normalize();
+      // (the link's frame has the same scale as the world: distances carry over)
+      if (_ray.intersectBox(L.box, _hitP) && _hitP.distanceTo(_ray.origin) < far) { hit.add(L); break; }
+    }
+  }
+  for (const L of links) {
+    L.fade += ((hit.has(L) ? FADED : 1) - L.fade) * 0.15;
+    const solid = L.fade > 0.98;
+    L.meshes.forEach((m, i) => {
+      m.material = solid ? L.solid[i] : L.ghost[i];
+      if (!solid) L.ghost[i].opacity = L.fade;
+      m.renderOrder = solid ? 0 : 2;
+    });
+  }
+}
+
+// ------------------------------------------------------------ depth cues: where the gripper would come down
+// As in the screening test ([depth_cues]): a ring and a dot on the table straight below the point
+// between the finger pads, and a line down to it; green when the pads are low enough to grab.
+const CUES = cfg.view.cues, TZ = 0.75;
+const CUE_C = new THREE.Color(CUES.color).getHex(), GRAB_C = new THREE.Color(CUES.grab_color).getHex();
 const cue = new THREE.Group();
-const cueMat = new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.85, depthTest: false });
-const cueRing = new THREE.Mesh(new THREE.RingGeometry(0.018, 0.026, 40), cueMat);
-const cueLineGeo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
-const cueLine = new THREE.Line(cueLineGeo, new THREE.LineBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.6, depthTest: false }));
-for (const o of [cueRing, cueLine]) { o.renderOrder = 10; o.frustumCulled = false; cue.add(o); }
+const cueMat = (opacity) => new THREE.MeshBasicMaterial({ color: CUE_C, transparent: true, opacity, depthTest: false, depthWrite: false });
+const cueRing = new THREE.Mesh(new THREE.RingGeometry(0.02, 0.028, 48), cueMat(0.9));
+const cueDot = new THREE.Mesh(new THREE.CircleGeometry(0.005, 20), cueMat(0.9));
+const cueLine = new THREE.Mesh(new THREE.CylinderGeometry(0.0015, 0.0015, 1, 8).rotateX(Math.PI / 2), cueMat(0.7));
+for (const o of [cueRing, cueDot, cueLine]) { o.renderOrder = 10; o.frustumCulled = false; cue.add(o); }
 mj.add(cue);
-let gripBody = -1;
-const _p = new THREE.Vector3(), _ofs = new THREE.Vector3();
-function updateCue() {
-  if (gripBody < 0 || !bodies[gripBody]) { cue.visible = false; return; }
+let gripBody = -1, pads = [-1, -1], cueColour = null;
+const _p = new THREE.Vector3(), _q = new THREE.Vector3(), _ofs = new THREE.Vector3();
+function padsPoint(out) {              // between the finger pads (or 14.5 cm out from the gripper base)
+  if (pads[0] >= 0 && pads[1] >= 0 && bodies[pads[0]] && bodies[pads[1]])
+    return out.copy(bodies[pads[0]].position).add(bodies[pads[1]].position).multiplyScalar(0.5);
   const b = bodies[gripBody];
-  _p.copy(b.position).add(_ofs.set(0, 0, 0.145).applyQuaternion(b.quaternion));   // the fingertips (14.5 cm from the gripper base)
-  const tz = 0.751, h = _p.z - tz;
-  cue.visible = h > 0 && h < 0.6;
-  cueRing.position.set(_p.x, _p.y, tz);
-  const a = cueLineGeo.attributes.position;
-  a.setXYZ(0, _p.x, _p.y, _p.z); a.setXYZ(1, _p.x, _p.y, tz); a.needsUpdate = true;
-  const c = h < 0.035 ? 0x4cd07d : 0xffd24a;
-  cueMat.color.setHex(c); cueLine.material.color.setHex(c);
+  return out.copy(b.position).add(_ofs.set(0, 0, 0.145).applyQuaternion(b.quaternion));
+}
+function updateCue() {
+  if (!CUES.enabled || gripBody < 0 || !bodies[gripBody]) { cue.visible = false; return; }
+  padsPoint(_p);
+  const h = _p.z - TZ;
+  cue.visible = h > -0.01 && h < 0.6;
+  cueRing.position.set(_p.x, _p.y, TZ + 0.0015);
+  cueDot.position.set(_p.x, _p.y, TZ + 0.0016);
+  cueLine.position.set(_p.x, _p.y, (_p.z + TZ) / 2); cueLine.scale.set(1, 1, Math.max(h, 1e-3));
+  const c = h < CUES.grab_height ? GRAB_C : CUE_C;
+  if (c !== cueColour) { for (const o of [cueRing, cueDot, cueLine]) o.material.color.setHex(c); cueColour = c; }
+}
+
+// ------------------------------------------------------------ the side view ([side_view])
+// A small second view in the top-right corner: the gripper from the robot's side at table height,
+// following it smoothly, so its height above the table and the things below it are easy to see.
+// Its near plane is 15 cm short of the gripper: whatever is between the camera and the gripper
+// (the arm, a post) is cut away.
+const SIDE = cfg.view.side;
+const sideCam = new THREE.PerspectiveCamera(SIDE.fov, 1.6, Math.max(0.02, SIDE.distance - 0.15), 10);
+const sideAim = new THREE.Vector3(), sideRect = { x: 0, y: 0, w: 0, h: 0 };
+let sideAimSet = false;
+function placeSide() {                 // the corner's place: under the top bar, at the right
+  const w = Math.round(innerWidth * SIDE.size), h = Math.round(w * 0.62);
+  const top = $('top'), tb = top && !top.classList.contains('hidden') ? top.getBoundingClientRect() : null;
+  Object.assign(sideRect, { x: innerWidth - w - 16, y: tb && tb.bottom > 0 ? Math.round(tb.bottom + 10) : 16, w, h });
+  const el = $('sideBox');
+  Object.assign(el.style, { left: `${sideRect.x}px`, top: `${sideRect.y}px`, width: `${w}px`, height: `${h}px` });
+  sideCam.aspect = w / h; sideCam.updateProjectionMatrix();
+}
+function sideOn() { return SIDE.enabled && gripBody >= 0 && !!bodies[gripBody] && !inMenu; }
+function renderSide() {
+  const on = sideOn();
+  $('sideBox').classList.toggle('hidden', !on);
+  if (!on) { sideAimSet = false; return; }
+  padsPoint(_q);
+  _q.z = TZ + SIDE.height;
+  if (!sideAimSet) { sideAim.copy(_q); sideAimSet = true; } else sideAim.lerp(_q, 0.12);
+  const s = SIDE.side === 'right' ? -1 : 1;              // the robot's left: +y in MuJoCo
+  sideCam.position.copy(toWorld([sideAim.x, sideAim.y + s * SIDE.distance, sideAim.z]));
+  sideCam.lookAt(toWorld([sideAim.x, sideAim.y, sideAim.z]));
+  placeSide();
+  const { x, y, w, h } = sideRect;
+  renderer.setScissorTest(true);
+  renderer.setViewport(x, innerHeight - y - h, w, h); renderer.setScissor(x, innerHeight - y - h, w, h);
+  renderer.render(scene, sideCam);
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight);
+  drawScale(w, h, _q.z, padsPoint(_p).z - TZ);
+}
+// A centimetre scale on the side view's left edge and a marker at the finger pads' height. The side
+// camera looks level from a fixed distance, so at the gripper's distance a height maps straight to
+// a row of the picture: row = h/2 - (z - camera height) / (2 d tan(fov/2)) x h.
+const scaleCv = document.createElement('canvas'), scaleCx = scaleCv.getContext('2d');
+function drawScale(w, h, zCam, padH) {
+  const box = $('sideBox');
+  if (scaleCv.parentNode !== box) { box.appendChild(scaleCv); Object.assign(scaleCv.style, { position: 'absolute', inset: '0', width: '100%', height: '100%' }); }
+  const r = Math.min(devicePixelRatio, 2);
+  if (scaleCv.width !== Math.round(w * r) || scaleCv.height !== Math.round(h * r)) { scaleCv.width = Math.round(w * r); scaleCv.height = Math.round(h * r); }
+  const c = scaleCx, span = 2 * SIDE.distance * Math.tan(SIDE.fov * Math.PI / 360);
+  const row = (hz) => (h / 2 - (TZ + hz - zCam) / span * h) * r;
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, scaleCv.width, scaleCv.height);
+  c.font = `${11 * r}px system-ui, sans-serif`; c.textBaseline = 'middle';
+  for (let cm = 0; cm <= 40; cm++) {
+    const yy = row(cm / 100);
+    if (yy < 22 * r || yy > scaleCv.height - 4 * r) continue;
+    const major = cm % 5 === 0;
+    c.fillStyle = major ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.45)';
+    c.fillRect(0, yy - 0.5 * r, (major ? 14 : 7) * r, r);
+    if (major) { c.fillStyle = 'rgba(255,255,255,0.9)'; c.fillText(`${cm}`, 17 * r, yy); }
+  }
+  if (padH > -0.01 && padH < 0.4) {                    // the finger pads' height, read off directly
+    const yy = row(padH), green = padH < CUES.grab_height;
+    c.fillStyle = green ? CUES.grab_color : CUES.color;
+    c.fillRect(0, yy - r, 30 * r, 2 * r);
+    const label = `${(Math.max(0, padH) * 100).toFixed(1)} cm`;
+    const tw = c.measureText(label).width + 8 * r;
+    c.fillStyle = 'rgba(8,10,14,0.7)'; c.fillRect(34 * r, yy - 9 * r, tw, 18 * r);
+    c.fillStyle = green ? CUES.grab_color : CUES.color; c.fillText(label, 38 * r, yy);
+  }
 }
 
 // ------------------------------------------------------------ post-processing and quality
@@ -311,7 +486,7 @@ const QUALITY = {
   high: { ratio: Math.min(devicePixelRatio, 2), shadow: 4096, ao: true, bloom: true },
   standard: { ratio: Math.min(devicePixelRatio, 1.25), shadow: 2048, ao: false, bloom: false },
   low: { ratio: 1, shadow: 1024, ao: false, bloom: false },
-  lite: { ratio: 1, shadow: 0, ao: false, bloom: false },     // no shadows at all: the lightest
+  lite: { ratio: 1, shadow: 1024, ao: false, bloom: false },  // the lightest; still shadows (the depth cue)
 };
 const forced = new URLSearchParams(location.search).get('q');
 let quality = QUALITY[forced] ? forced : 'lite';        // the lightest by default (?q=low / standard / high for more)
@@ -328,7 +503,7 @@ function applyQuality() {
   }
   gtao.enabled = q.ao; bloom.enabled = q.bloom;
   useComposer = q.ao || q.bloom;
-  key.shadow.radius = quality === 'low' ? 2 : 4;
+  key.shadow.radius = 2;
   resize();
 }
 function resize() {
@@ -343,21 +518,41 @@ applyQuality();
 // ------------------------------------------------------------ smooth motion between packets
 // Each packet: the simulation time and every body's pose. Shown 30 ms late, interpolated between
 // the two packets around that moment (positions linearly, rotations by slerp).
-const DELAY = 0.03;
+// The robot is shown a little in the past, blended between the server's updates (~50 a second),
+// so it moves smoothly whatever the frame rate. Over the internet the updates arrive unevenly: the
+// delay adapts to cover how late 95 % of them come (last 3 s), between 30 and 150 ms, and changes
+// slowly (never seen as a jump). Too short a delay and the robot freezes and jumps on screen.
+const DELAY_MIN = 0.03, DELAY_MAX = 0.15;
+let delay = DELAY_MIN, lates = [], delayT = performance.now();
 let snaps = [], clockOff = null, lastSim = -1;
+let paused = false;
 function addSnap(f) {
   const t = f[0], n = f[2];
-  if (t < lastSim - 0.001) { snaps = []; clockOff = null; }     // a new level: the clock restarts
+  if (t < lastSim - 0.001) { snaps = []; clockOff = null; lates = []; }   // a new level: the clock restarts
+  // the simulation paused (a task card, a countdown): its clock stands still while the updates keep
+  // coming, which would look like ever later updates. Wait, then measure afresh when it moves again
+  if (t <= lastSim + 1e-6 && snaps.length) { paused = true; return; }
+  if (paused) { paused = false; clockOff = null; lates = []; delay = DELAY_MIN; }
   lastSim = t;
   const off = performance.now() / 1000 - t;                       // local clock - simulation clock
   clockOff = clockOff === null ? off : Math.min(off, clockOff + 0.002);   // lower envelope: the least-delayed packet
+  lates.push(off - clockOff);                                     // how late this one came
+  if (lates.length > 150) lates.shift();
   snaps.push({ t, n, f });
-  if (snaps.length > 12) snaps.shift();
+  if (snaps.length > 20) snaps.shift();
+}
+function updateDelay() {
+  const now = performance.now(), dt = Math.min(0.1, (now - delayT) / 1000); delayT = now;
+  if (lates.length < 20) return;
+  const sorted = [...lates].sort((x, y) => x - y);
+  const want = Math.min(DELAY_MAX, Math.max(DELAY_MIN, sorted[Math.floor(0.95 * (sorted.length - 1))] + 0.01));
+  delay = want > delay ? Math.min(want, delay + 0.2 * dt) : Math.max(want, delay - 0.03 * dt);
 }
 const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
 function applySnaps() {
   if (!snaps.length || !bodies.length) return;
-  const rt = performance.now() / 1000 - clockOff - DELAY;       // the simulation moment to show
+  updateDelay();
+  const rt = performance.now() / 1000 - clockOff - delay;       // the simulation moment to show
   let a = snaps[0], b = snaps[snaps.length - 1];
   for (let i = snaps.length - 1; i > 0; i--) {
     if (snaps[i - 1].t <= rt) { a = snaps[i - 1]; b = snaps[i]; break; }
@@ -378,7 +573,11 @@ let ws, status = {};
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
   ws.binaryType = 'arraybuffer';
-  ws.onopen = () => { if (CAND) ws.send(JSON.stringify({ type: 'join', code: CAND })); };
+  ws.onopen = () => {
+    sentYaw = null;                                   // (a new connection: send the view's heading again)
+    ws.send(JSON.stringify({ type: 'visible', on: !document.hidden }));
+    if (CAND) ws.send(JSON.stringify({ type: 'join', code: CAND }));
+  };
   ws.onclose = () => setTimeout(connect, 1000);
   ws.onmessage = (ev) => {
     if (typeof ev.data === 'string') {
@@ -394,7 +593,9 @@ function connect() {
   };
 }
 connect();
-const send = (m) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
+// a hidden page (a background tab) gets no robot poses: they would only pile up on its connection
+document.addEventListener('visibilitychange', () => send({ type: 'visible', on: !document.hidden }));
+const send = (m) => { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(m)); return true; } return false; };
 $('restart').onclick = () => { send({ type: 'restart' }); $('restart').blur(); };
 $('toMenu').onclick = () => { send({ type: 'menu' }); $('toMenu').blur(); };
 $('doneMenu').onclick = () => send({ type: 'menu' });
@@ -405,6 +606,7 @@ let lastMsg = '', toastT = 0, lastCount = '';
 const GAME_ICONS = {
   wire: '<svg viewBox="0 0 64 64" fill="none"><path d="M4 40 C 16 16, 26 16, 34 34 S 52 52, 60 24" stroke="#36c2ff" stroke-width="4" stroke-linecap="round"/><ellipse cx="34" cy="34" rx="8" ry="11" stroke="#ffd27a" stroke-width="4"/><path d="M34 45v14" stroke="#e9ecf1" stroke-width="5" stroke-linecap="round"/></svg>',
   cubes: '<svg viewBox="0 0 64 64" fill="none"><rect x="8" y="30" width="18" height="18" rx="3" fill="#f4a261"/><rect x="34" y="14" width="22" height="22" rx="3" stroke="#2fdc7f" stroke-width="3" stroke-dasharray="5 4"/><rect x="38" y="40" width="16" height="16" rx="3" fill="#457b9d"/><path d="M20 26 C 24 12, 34 10, 40 14" stroke="#e9ecf1" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 5"/></svg>',
+  rings: '<svg viewBox="0 0 64 64" fill="none"><path d="M14 56V40M32 56V34M50 56V28" stroke="#c7cbd1" stroke-width="4" stroke-linecap="round"/><path d="M14 40l-6-12M32 34l-4-14M50 28l-2-16" stroke-width="4" stroke-linecap="round" stroke="#e9ecf1"/><ellipse cx="11" cy="34" rx="7" ry="4" stroke="#db2921" stroke-width="3.5" transform="rotate(-60 11 34)"/><ellipse cx="30" cy="27" rx="7" ry="4" stroke="#266be6" stroke-width="3.5" transform="rotate(-75 30 27)"/><ellipse cx="49" cy="20" rx="7" ry="4" stroke="#24b34d" stroke-width="3.5" transform="rotate(-85 49 20)"/></svg>',
   tower: '<svg viewBox="0 0 64 64" fill="none"><rect x="14" y="52" width="36" height="6" rx="2" fill="#9c6b3d"/><rect x="22" y="40" width="20" height="12" rx="2" fill="#e63946"/><rect x="18" y="30" width="28" height="10" rx="2" fill="#e9c46a"/><rect x="24" y="18" width="16" height="12" rx="2" fill="#2a9d8f"/><rect x="26" y="6" width="12" height="12" rx="2" fill="#8e5bd8"/></svg>',
 };
 let menuBuilt = false, inMenu = null;
@@ -425,6 +627,7 @@ function onStatus(s) {
   const menu = s.state === 'menu';
   if (menu !== inMenu) {
     inMenu = menu;
+    if (!CAND) show('mouseHint', !menu);
     for (const id of ['top', 'progWrap', 'steps']) $(id).classList.toggle('hidden', menu);
     $('menu').classList.toggle('hidden', !menu);
     $('toMenu').classList.toggle('hidden', menu); $('restart').classList.toggle('hidden', menu);
@@ -513,9 +716,13 @@ function viewYaw() {                     // the camera's heading in MuJoCo's fra
   d.applyMatrix4(inv.copy(mj.matrixWorld).invert().setPosition(0, 0, 0));
   return Math.atan2(d.y, d.x);
 }
+let sentDist = null;
 setInterval(() => {
-  const y = viewYaw();
-  if (sentYaw === null || Math.abs(y - sentYaw) > 0.01) { send({ type: 'view', yaw: y }); sentYaw = y; }
+  const y = viewYaw(), dist = camera.position.distanceTo(controls.target);
+  // (the heading for the phone's "forward", the distance for the tutorial's zoom step; only counted
+  // as sent once it really went out: the first try can come before the connection is open)
+  if ((sentYaw === null || Math.abs(y - sentYaw) > 0.01 || Math.abs(dist - sentDist) > 0.01 * sentDist)
+      && send({ type: 'view', yaw: y, dist })) { sentYaw = y; sentDist = dist; }
 }, 200);
 
 // ------------------------------------------------------------ frame loop, frame rate, auto quality
@@ -532,18 +739,21 @@ renderer.setAnimationLoop((now) => {
   camera.position.x += sx; camera.position.y += sy;
   applySnaps();
   updateCue();
+  updateLinks();
+  renderer.shadowMap.needsUpdate = true;                 // (once per frame: the side view reuses it)
   if (useComposer) composer.render(); else renderer.render(scene, camera);
+  renderSide();
   camera.position.x -= sx; camera.position.y -= sy;
   frames++;
   if (now - fpsT > 2000) {
     const fps = frames * 1000 / (now - fpsT);
     frames = 0; fpsT = now;
-    $('fps').textContent = `${Math.round(fps)} fps · ${quality}`;
+    $('fps').textContent = `${Math.round(fps)} fps · ${quality} · ${Math.round(delay * 1000)} ms`;
     if (!forced && sceneId >= 0) {
       slow = fps < 45 ? slow + 1 : 0;
       if (slow >= 2 && quality !== 'lite') { quality = { high: 'standard', standard: 'low', low: 'lite' }[quality]; slow = 0; applyQuality(); }
     }
-    if (now - reportT > 10000) { send({ type: 'fps', fps: Math.round(fps), quality, gpu }); reportT = now; }
+    if (now - reportT > 10000) { send({ type: 'fps', fps: Math.round(fps), quality, gpu, delay_ms: Math.round(delay * 1000) }); reportT = now; }
   }
 });
 
@@ -573,6 +783,7 @@ function candidateView(s) {
   }
   // the assessment: only the robot and a thin timer
   for (const id of ['top', 'progWrap', 'steps', 'phoneChip']) if (assessing || !playing) show(id, false); else if (id !== 'steps') show(id, true);
+  show('mouseHint', playing && (st === 'tutorial' || st === 'practice'));   // (not in the assessment: nothing on the view)
   show('thin', assessing && s.state === 'play');
   if (assessing && s.limit) { const left = Math.max(0, s.limit - s.time); $('thin').textContent = fmt(left); $('thin').classList.toggle('low', left < 20); }
   if (st === 'done') { $('doneT').textContent = 'Thank you, your test is complete'; $('doneP').textContent = 'Your results have been saved. You can close this page and put your phone down.'; show('doneMenu', false); }
@@ -582,7 +793,10 @@ function candidateView(s) {
 if (CAND) {
   for (const id of ['menu', 'corner']) show(id, false);
   $('qr1').src = `/qr.svg?for=candidate&c=${CAND}`;
-  fetch('/config.json').then(r => r.json()).then(c => { if (c.phone_url) $('url1').textContent = c.phone_url.replace(/\/phone$/, `/p/${CAND}`); });
+  fetch('/config.json').then(r => r.json()).then(c => {
+    if (c.phone_url) $('url1').textContent = c.phone_url.replace(/\/phone$/, `/p/${CAND}`);
+    if (c.tasks) $('wTasks').textContent = $('rTasks').textContent = String(c.tasks);   // (the assessment's tasks)
+  });
   const check = () => { $('wStart').disabled = !($('wConsent').checked && $('wName').value.trim()); };
   $('wConsent').addEventListener('change', check); $('wName').addEventListener('input', check);
   $('wStart').onclick = () => { ensureAudio(); send({ type: 'begin', name: $('wName').value.trim() }); };

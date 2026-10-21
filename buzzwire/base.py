@@ -37,6 +37,7 @@ from .config import TABLE_Z, Config
 from .ik import IK
 
 COUNTDOWN_S = 3.0
+FF_SMOOTH = 0.3                 # the feed-forward velocity: this share of the way to the new one per tick (~30 ms)
 
 
 def yaw_only(q):
@@ -81,11 +82,13 @@ class OneEuro:
 
 
 class Follower:
-    """The arm's goal: the teleop target, smoothed and speed-limited.
+    """The arm's goal: the teleop target, smoothed, then speed-limited (as vrteleop/arms.py:
+    _smoothed, then _limited).
 
-    Smoothing ([controls] filter): "one_euro" filters each new controller sample (a phone sends ~30
-    a second) with the One Euro filter, using the real time between samples; "simple" is a plain
-    low-pass with the time constant smoothing_s."""
+    Smoothing ([controls] filter): "simple" (the default, as in the screening test) moves a
+    fraction 1 - exp(-dt / smoothing_s) of the way toward the hand every control tick, position
+    and rotation: the same delay at every speed. "one_euro" filters each new controller sample with
+    the One Euro filter, then glides between samples."""
 
     def __init__(self, cfg: Config):
         ct = cfg.controls
@@ -175,7 +178,6 @@ def rms_jerk(P, dt) -> float | None:
 class RobotGame:
     KIND = "base"                   # the game's key (server, menu, results)
     TITLE = ""
-    table_clearance: float | None = None     # (a game may let the gripper lower than [robot] allows)
 
     def __init__(self, cfg: Config, levels: list, out_dir: Path | None = None, player: str = ""):
         self.cfg = cfg
@@ -188,6 +190,7 @@ class RobotGame:
         self.input_log: dict[str, list] = {}
         self.latest_input: dict | None = None
         self.view_yaw = 0.0
+        self.view_dist = None           # the screen's camera distance (the tutorial's zoom step)
         self.li = -1
         self.finished = False
         self.next_level()
@@ -246,10 +249,8 @@ class RobotGame:
         self.d.ctrl[self.sc.arm_act] = cfg.robot["home"]
         mujoco.mj_forward(self.m, self.d)
         self.ik = IK(self.sc, self.d)
-        clearance = self.table_clearance if self.table_clearance is not None else cfg.robot["table_clearance"]
-        self.ik.z_min = TABLE_Z + clearance
         self.q_cmd = np.array(cfg.robot["home"], float)
-        self.teleop = ArmTeleop(pos_scale=cfg.controls["motion_scale"], z_min=TABLE_Z + clearance)
+        self.teleop = ArmTeleop(pos_scale=cfg.controls["motion_scale"], z_min=self.ik.z_min)
         self.teleop.reset(*self.ik.fk(self.q_cmd))
         self.follow = Follower(cfg)
         self.tick = 0
@@ -266,6 +267,14 @@ class RobotGame:
         self.message = lv.title
         self.setup_level(lv)
         self._quat0 = self.teleop.target_quat.copy()      # (rotation "none": the gripper keeps this)
+        # velocity feed-forward ([robot] servo_feedforward): each joint motor is a PD controller
+        # (force = kp (q_cmd - q) - kv qdot), which on its own trails a moving command by kv/kp
+        # (0.1 s). Commanding q_cmd + (kv/kp) x the command's velocity makes it a PD controller
+        # with a velocity reference, as an industrial robot's servo: it follows without trailing,
+        # and it's no stiffer (no twitching)
+        m, act = self.m, self.sc.arm_act
+        self._ff = -m.actuator_biasprm[act, 2] / m.actuator_gainprm[act, 0] if cfg.robot["servo_feedforward"] else None
+        self._q_prev, self._qd = None, np.zeros(len(act))
 
     def end_level(self, completed: bool):
         mt, lv = self.metrics, self.level
@@ -323,7 +332,13 @@ class RobotGame:
             self.q_cmd = self.ik.step(self.q_cmd, gp, gq, self.dt)
         else:
             self.follow.reset()
-        d.ctrl[sc.arm_act] = self.q_cmd
+        if self._ff is not None:
+            qd = np.zeros_like(self.q_cmd) if self._q_prev is None else (self.q_cmd - self._q_prev) / self.dt
+            self._qd += (qd - self._qd) * FF_SMOOTH          # (a little smoothing: no tick-to-tick jitter)
+            self._q_prev = self.q_cmd.copy()
+            d.ctrl[sc.arm_act] = self.q_cmd + self._ff * self._qd
+        else:
+            d.ctrl[sc.arm_act] = self.q_cmd
         d.ctrl[sc.grip_act] = 255.0 * tel.gripper
         for _ in range(self.substeps):
             mujoco.mj_step(self.m, d)

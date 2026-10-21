@@ -48,7 +48,6 @@ class CubesGame(RobotGame):
     def __init__(self, cfg: Config, levels: list[str] | None = None, out_dir: Path | None = None, player: str = ""):
         self.tc = SS.CFG                                  # the screening test's configuration
         gcfg = cfg.games["cubes"]
-        self.table_clearance = gcfg["table_clearance"]
         lvls = []
         for key in gcfg["phases"]:
             if levels is not None and key not in levels:
@@ -85,6 +84,7 @@ class CubesGame(RobotGame):
         mujoco.mj_forward(self.m, d)
         self.holding = {n: False for n in ph.graspable}
         self.done = {st.id: False for st in ph.steps}
+        self._was_done = {}
         self.in_bin = {st.object: None for st in ph.steps if st.type == "place_in_bin"}
         self._prev_cmd = 0.0
         self._credited = True
@@ -185,6 +185,10 @@ class CubesGame(RobotGame):
                     mt["wrong_bin"] += 1
                 self.in_bin[n] = b
                 self.done[st.id] = b == st.marker
+        for st in self.level.phase.steps:                # (when each step got done / undone, for the results)
+            if self.done[st.id] != self._was_done.get(st.id, False):
+                mt["events"].append([round(t, 2), "step" if self.done[st.id] else "undone", st.label])
+                self._was_done[st.id] = self.done[st.id]
         mt["steps_done"] = sum(self.done.values())
         mt["progress"] = mt["steps_done"] / max(1, mt["steps_total"])
         if mt["steps_done"] == mt["steps_total"]:

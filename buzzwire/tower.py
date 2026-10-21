@@ -50,7 +50,6 @@ class TowerGame(RobotGame):
 
     def __init__(self, cfg: Config, levels: list[str] | None = None, out_dir: Path | None = None, player: str = ""):
         self.tw = cfg.games["tower"]
-        self.table_clearance = self.tw["table_clearance"]
         lvls = [TowerLevel(**lv) for lv in self.tw["levels"] if levels is None or lv["key"] in levels]
         super().__init__(cfg, lvls, out_dir, player)
 
@@ -89,8 +88,9 @@ class TowerGame(RobotGame):
         return sc
 
     def new_metrics(self, lv: TowerLevel) -> dict:
+        colors = ["#%02x%02x%02x" % tuple(round(255 * x) for x in b["rgba"][:3]) for b in lv.blocks]
         return dict(placed=0, blocks=len(lv.blocks), height_cm=0.0, best_height_cm=0.0, falls=0, grasp_attempts=0,
-                    grasps=0, drops=0, progress=0.0, events=[])
+                    grasps=0, drops=0, progress=0.0, block_colors=colors, events=[])
 
     def setup_level(self, lv: TowerLevel):
         d = self.d
@@ -106,6 +106,7 @@ class TowerGame(RobotGame):
         mujoco.mj_forward(self.m, d)
         self._prev_cmd, self._credited = 0.0, True
         self._still_since, self._stable_h = None, 0.0
+        self._placed_now = []
 
     def _spawn(self):
         """The next block onto the supply spot (if any are left)."""
@@ -166,6 +167,7 @@ class TowerGame(RobotGame):
                     mt["events"].append([round(t, 2), "grasp", i])
                 if self.state_of[i] == "tower":
                     self.state_of[i] = "moving"               # (taken off the tower again)
+                    mt["events"].append([round(t, 2), "off", i])
             elif self.holding[i] and not held and cmd >= 0.95 and not near:
                 mt["drops"] += 1
                 mt["events"].append([round(t, 2), "drop", i])
@@ -178,11 +180,12 @@ class TowerGame(RobotGame):
             if on_tower:
                 if self.state_of[i] != "tower":
                     self.state_of[i] = "tower"
+                    self._placed_now.append(i)
                 height = max(height, p[2] + hz - self.top)
             elif bottom < TABLE_Z + 0.006 and np.hypot(p[0] - self.tw["supply"][0], p[1] - self.tw["supply"][1]) > SUPPLY_CLEAR:
                 if self.state_of[i] == "tower":
                     mt["falls"] += 1
-                    mt["events"].append([round(t, 2), "fall", i])
+                    mt["events"].append([round(t, 2), "fall", i, mt["height_cm"]])   # (the tower's height before)
                 self.state_of[i] = "table"
         # the next block when the supply spot is empty
         sx, sy = self.tw["supply"]
@@ -191,11 +194,15 @@ class TowerGame(RobotGame):
             self._spawn()
         mt["placed"] = sum(s == "tower" for s in self.state_of)
         mt["height_cm"] = round(float(height) * 100, 1)
+        for i in self._placed_now:                          # placed: the tower's height with it
+            mt["events"].append([round(t, 2), "place", i, mt["height_cm"]])
+        self._placed_now = []
         # the best height that stood still for a second
         if all_still:
             self._still_since = self._still_since if self._still_since is not None else t
-            if t - self._still_since >= STABLE_S:
-                mt["best_height_cm"] = max(mt["best_height_cm"], mt["height_cm"])
+            if t - self._still_since >= STABLE_S and mt["height_cm"] > mt["best_height_cm"]:
+                mt["best_height_cm"] = mt["height_cm"]
+                mt["events"].append([round(t, 2), "best", mt["best_height_cm"]])   # (a new best that stood)
         else:
             self._still_since = None
         mt["progress"] = min(1.0, mt["best_height_cm"] / 100 / lv.target)

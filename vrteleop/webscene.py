@@ -44,12 +44,15 @@ def _data_url(img_bytes: bytes, mime: str) -> str:
 
 
 class _Textures:
-    def __init__(self, m: mujoco.MjModel):
+    def __init__(self, m: mujoco.MjModel, enabled: bool = True):
         self.m = m
+        self.enabled = enabled
         self.index: dict[int, int] = {}
         self.items: list[str] = []
 
     def add_model_texture(self, texid: int) -> int:
+        if not self.enabled:
+            return -1
         if texid in self.index:
             return self.index[texid]
         m = self.m
@@ -89,9 +92,12 @@ def _materials(m: mujoco.MjModel, tex: _Textures, used: set[int]):
 
 
 def export_scene(m: mujoco.MjModel, max_group: int = 2, cloth: C.ClothInfo | None = None,
-                 web_textures: dict | None = None, subdiv_levels: int = 2, cloth_material: int = -1):
+                 web_textures: dict | None = None, subdiv_levels: int = 2, cloth_material: int = -1,
+                 textures: bool = True, compress: bool = True):
     """Returns (render_body_ids, gzipped JSON bytes). `cloth` is the garment pattern; a cloth
-    simulated outside MuJoCo (no flex, flex_id < 0) gets its material from `cloth_material`."""
+    simulated outside MuJoCo (no flex, flex_id < 0) gets its material from `cloth_material`.
+    textures=False leaves the model's textures out (a client with its own materials);
+    compress=False returns the payload as a dict instead of gzipped JSON."""
     body_index: dict[int, int] = {}
     render_bodies: list[int] = []
     geoms = []
@@ -99,7 +105,7 @@ def export_scene(m: mujoco.MjModel, max_group: int = 2, cloth: C.ClothInfo | Non
     mesh_lookup: dict[int, int] = {}
     mesh_hash: dict[str, int] = {}
     used_mats: set[int] = set()
-    tex = _Textures(m)
+    tex = _Textures(m, textures)
 
     for g in range(m.ngeom):
         gtype = int(m.geom_type[g])
@@ -190,4 +196,6 @@ def export_scene(m: mujoco.MjModel, max_group: int = 2, cloth: C.ClothInfo | Non
         "textures": tex.items,
         "flexes": flexes,
     }
+    if not compress:
+        return np.array(render_bodies, dtype=np.int64), payload
     return np.array(render_bodies, dtype=np.int64), gzip.compress(json.dumps(payload).encode(), 5)
