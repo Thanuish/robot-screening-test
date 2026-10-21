@@ -6,7 +6,7 @@ import mujoco
 import numpy as np
 
 from . import scene as S
-from .ik import DiffIK
+from .ik import DiffIK, QPIK
 from .teleop import ArmTeleop
 
 
@@ -29,6 +29,50 @@ class DualArms:
         # it the arm moves in small steps
         self.smoothing: float | None = None
         self._smooth = {s: None for s in S.SIDES}    # the smoothed target (pos, quat)
+        # arms that ignore the controller for now (e.g. during a game's countdown): they hold
+        # still; when released, the clutch takes hold afresh (no jump)
+        self.frozen: set = set()
+        self._homing = {s: None for s in S.SIDES}     # an arm gliding back to a pose (start_homing)
+
+    def use_qp_ik(self, **opts):
+        """Switch every arm to the QP IK (joint limits and speeds as exact bounds, table
+        keep-out); opts go to QPIK (e.g. clearance={...})."""
+        m = self.info.model
+        self.ik = {s: QPIK(m, self.info.arm_qpos_adr[s], self.info.arm_dof_adr[s], self.info.ee_site[s],
+                           self.home[s], prefix=f"{s}_", **opts) for s in S.SIDES}
+
+    def start_homing(self, side: str, q=None, speed_deg: float = 60.0):
+        """Glide the arm back to joint angles q (default: its home pose), about speed_deg per
+        second on the joint that has furthest to go (0.8 to 3 s). The controller is ignored
+        meanwhile; afterwards the clutch takes hold afresh (no jump). The gripper stays as it is."""
+        q1 = np.asarray(self.home[side] if q is None else q, float)
+        q0 = self.q_cmd[side].copy()
+        dur = float(np.clip(np.max(np.abs(q1 - q0)) / np.radians(speed_deg), 0.8, 3.0))
+        self._homing[side] = dict(q0=q0, q1=q1, t=0.0, dur=dur)
+
+    def homing(self, side: str) -> bool:
+        return self._homing[side] is not None
+
+    def hold(self, d: mujoco.MjData, side: str, q):
+        """Put an arm at joint angles q (physics and command) and anchor its teleop there (a game
+        that starts with the arm somewhere else than home)."""
+        q = np.asarray(q, float)
+        d.qpos[self.info.arm_qpos_adr[side]] = q
+        d.qvel[self.info.arm_dof_adr[side]] = 0
+        self.q_cmd[side] = q.copy()
+        pos, quat = self.ik[side].fk(q, d.qpos)
+        self.teleop[side].reset(pos, quat)
+        self._goal[side] = None
+        self._smooth[side] = None
+
+    def solve(self, d: mujoco.MjData, side: str, pos, quat, iters: int = 400):
+        """Joint angles that put the gripper at (pos, quat), from the current command (the IK run
+        to convergence); returns (q, position error [m])."""
+        q = self.q_cmd[side].copy()
+        for _ in range(iters):
+            q = self.ik[side].step(q, np.asarray(pos, float), np.asarray(quat, float), 0.05, full_qpos=d.qpos)
+        p, _ = self.ik[side].fk(q, d.qpos)
+        return q, float(np.linalg.norm(p - pos))
 
     def reset(self, d: mujoco.MjData):
         for s in S.SIDES:
@@ -37,6 +81,7 @@ class DualArms:
             self.teleop[s].reset(pos, quat)
             self._goal[s] = None
             self._smooth[s] = None
+            self._homing[s] = None
 
     def _smoothed(self, s: str, pos, quat, dt: float):
         """Move toward (pos, quat) a fraction 1 - exp(-dt / smoothing) of the way per tick."""
@@ -84,17 +129,34 @@ class DualArms:
         None when it is stale (the arms disengage and hold still)."""
         for s in S.SIDES:
             tel = self.teleop[s]
+            h = self._homing[s]
+            if h is not None:                        # gliding home: a smooth joint-space move
+                h["t"] += dt
+                a = min(1.0, h["t"] / h["dur"])
+                a = a * a * (3 - 2 * a)
+                self.q_cmd[s] = h["q0"] + (h["q1"] - h["q0"]) * a
+                tel.disengage()
+                tel.target_pos, tel.target_quat = self.ik[s].fk(self.q_cmd[s])
+                self._goal[s] = self._smooth[s] = None
+                if h["t"] >= h["dur"]:
+                    self._homing[s] = None
+                d.ctrl[self.info.arm_act[s]] = self.q_cmd[s]
+                d.ctrl[self.info.grip_act[s]] = 255.0 * tel.gripper
+                continue
             if not tel.engaged:
                 # keep the virtual target glued to the commanded pose while idle
                 tel.target_pos, tel.target_quat = self.ik[s].fk(self.q_cmd[s])
-            if inputs is not None:
-                tel.update(inputs.get(s), dt)
+            if inputs is not None and s not in self.frozen:
+                c = inputs.get(s)
+                if c is not None and inputs.get("t") is not None and "t" not in c:
+                    c = dict(c, t=inputs["t"])          # (the sender's clock: for the glitch guard)
+                tel.update(c, dt)
             else:
                 tel.disengage()
             if tel.engaged:
                 pos, quat = self._smoothed(s, tel.target_pos, tel.target_quat, dt)
                 pos, quat = self._limited(s, pos, quat, dt)
-                self.q_cmd[s] = self.ik[s].step(self.q_cmd[s], pos, quat, dt)
+                self.q_cmd[s] = self.ik[s].step(self.q_cmd[s], pos, quat, dt, full_qpos=d.qpos)
             else:
                 self._goal[s] = None              # (starts again from wherever the arm is)
                 self._smooth[s] = None

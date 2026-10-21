@@ -26,13 +26,14 @@ DEFAULT_PATH = ROOT / "config" / "screening.toml"
 TABLE_X = (-0.15, 0.95)
 TABLE_Y = (-0.75, 0.75)
 ARM_REACH = 0.85                 # a UR5e reaches 85 cm from its base
+ARM_NEAR = 0.35                  # closer than this the arm has to fold up to reach down: awkward
 TABLE_Z = 0.75                   # table top height (= vrteleop.scene.TABLE_Z)
 
-SHAPES = ("box", "sphere", "cylinder", "cup")
-MARKER_KINDS = ("zone", "slot", "bin", "bowl", "holder")
+SHAPES = ("box", "sphere", "cylinder", "cup", "ring")
+MARKER_KINDS = ("zone", "slot", "bin", "bowl", "holder", "peg", "wire", "platform")
 STEP_TYPES = ("reach", "place_in_zone", "place_in_slot", "place_in_bin", "remove_from", "lay_flat",
-              "pour_into", "set_upright")
-LATCHED = ("reach", "remove_from", "lay_flat", "pour_into", "set_upright")   # stay done once done
+              "pour_into", "set_upright", "hang_on", "follow_wire", "stack")
+LATCHED = ("reach", "remove_from", "lay_flat", "pour_into", "set_upright", "follow_wire")   # stay done once done
 PLACE_STEPS = ("place_in_zone", "place_in_slot", "place_in_bin")
 
 
@@ -53,6 +54,8 @@ class Arm:
     max_speed: float             # [m/s]
     max_turn: float              # [rad/s]
     servo_stiffness: float
+    ik: str = "qp"               # "qp": QP IK (exact joint limits, table keep-out); "dls": the old one
+    table_clearance: float = 0.02  # [m] the wrist keeps this far above the table (qp)
 
 
 @dataclass
@@ -87,6 +90,7 @@ class Obj:
     cup_wall: float = 0.0
     cup_bottom: float = 0.0
     cup_segments: int = 0
+    ring_segments: int = 0       # a ring: half = [radius to the middle of its tube, half the tube's thickness]
 
 
 @dataclass
@@ -112,6 +116,8 @@ class Step:
     marker: str | None = None    # zone / slot / bin / holder / container
     distance: float = 0.0        # remove_from
     count: int = 0               # pour_into
+    supply: str | None = None    # stack: the zone where the next block appears
+    target_height: float = 0.0   # stack: a tower this high scores full marks [m]
 
     @property
     def latched(self) -> bool:
@@ -131,6 +137,8 @@ class Phase:
     markers: list = field(default_factory=list)
     steps: list = field(default_factory=list)
     graspable: list = field(default_factory=list)   # objects whose grasps and drops are counted
+    repeat: bool = False         # all steps done: a new round (everything back to its start) until time is up
+    target_rounds: int = 1       # (repeat) this many rounds score full marks
 
 
 @dataclass
@@ -267,6 +275,9 @@ class _Checker:
         elif base is not None and math.hypot(x - base[0], y - base[1]) > ARM_REACH:
             self.err(where, f"({x}, {y}) is out of the arm's reach ({ARM_REACH} m from its base "
                             f"at {tuple(base)})")
+        elif base is not None and math.hypot(x - base[0], y - base[1]) < ARM_NEAR:
+            self.err(where, f"({x}, {y}) is only {math.hypot(x - base[0], y - base[1]):.2f} m from the arm's base: "
+                            f"the arm has to fold up to reach down there (at least {ARM_NEAR} m)")
 
 
 def _hex(rgba):
@@ -328,7 +339,7 @@ def set_values(updates: dict, p: Path | str | None = None) -> Config:
 
 def parse(raw: dict, p: Path | str = "<config>") -> Config:
     c = _Checker()
-    c.keys(raw, "file", ("version", "arm", "controls", "view", "depth_cues", "timing", "tolerances",
+    c.keys(raw, "file", ("version", "arm", "controls", "view", "side_view", "depth_cues", "timing", "tolerances",
                          "scoring", "texts", "reach_target", "materials", "objects", "markers", "phases"),
            required=("arm", "objects", "phases"))
     if raw.get("version", 1) != 1:
@@ -337,7 +348,7 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
     # ---- arm
     a = raw.get("arm", {})
     c.keys(a, "arm", ("model", "side", "base", "home_deg", "min_height", "max_speed", "max_turn_deg",
-                      "servo_stiffness"))
+                      "servo_stiffness", "ik", "table_clearance"))
     side = c.text(a, "side", "arm", "right", ("left", "right"))
     arm = Arm(model=c.text(a, "model", "arm", "ur5e", ("ur5e",)), side=side,
               base=tuple(c.vec(a, "base", "arm", 2, [0.0, 0.36 if side == "left" else -0.36])),
@@ -346,7 +357,9 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
               min_height=c.num(a, "min_height", "arm", 0.02, lo=0.0, hi=0.3),
               max_speed=c.num(a, "max_speed", "arm", 1.0, lo=0.0, hi=3.0, lo_open=True),
               max_turn=math.radians(c.num(a, "max_turn_deg", "arm", 180, lo=0.0, hi=720, lo_open=True)),
-              servo_stiffness=c.num(a, "servo_stiffness", "arm", 1.0, lo=0.1, hi=10))
+              servo_stiffness=c.num(a, "servo_stiffness", "arm", 1.0, lo=0.1, hi=10),
+              ik=c.text(a, "ik", "arm", "qp", ("qp", "dls")),
+              table_clearance=c.num(a, "table_clearance", "arm", 0.02, lo=0.0, hi=0.2))
     if not (TABLE_X[0] <= arm.base[0] <= TABLE_X[1] and TABLE_Y[0] <= arm.base[1] <= TABLE_Y[1]):
         c.err("arm.base", f"{arm.base} is off the table")
 
@@ -357,10 +370,20 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
 
     # ---- view and depth cues
     v = raw.get("view", {})
-    c.keys(v, "view", ("eye", "look_at", "fov_deg"))
+    c.keys(v, "view", ("eye", "look_at", "fov_deg", "arm_opacity", "table_grid"))
     view = dict(eye=c.vec(v, "eye", "view", 3, [-0.30, 0.0, 1.52]),
                 look=c.vec(v, "look_at", "view", 3, [0.47, -0.02, 0.75]),
-                fov=c.num(v, "fov_deg", "view", 62, lo=20, hi=120))
+                fov=c.num(v, "fov_deg", "view", 62, lo=20, hi=120),
+                arm_opacity=c.num(v, "arm_opacity", "view", 1.0, lo=0.05, hi=1.0),
+                table_grid=c.num(v, "table_grid", "view", 0.0, lo=0.0, hi=0.5))
+    sv = raw.get("side_view", {})
+    c.keys(sv, "side_view", ("enabled", "from", "size", "distance", "height", "fov_deg"))
+    view["side"] = dict(enabled=c.flag(sv, "enabled", "side_view", False),
+                        side=c.text(sv, "from", "side_view", "left", ("left", "right")),
+                        size=c.num(sv, "size", "side_view", 0.28, lo=0.1, hi=0.6),
+                        distance=c.num(sv, "distance", "side_view", 0.6, lo=0.1, hi=3.0),
+                        height=c.num(sv, "height", "side_view", 0.08, lo=-0.2, hi=1.0),
+                        fov=c.num(sv, "fov_deg", "side_view", 35, lo=10, hi=100))
     if view["eye"] == view["look"]:
         c.err("view", "eye and look_at are the same point")
     dc = raw.get("depth_cues", {})
@@ -386,10 +409,11 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
     tol["flat_cos"] = math.cos(math.radians(tol.pop("flat_within_deg")))
     tol["upright_cos"] = math.cos(math.radians(tol.pop("upright_within_deg")))
     sc = raw.get("scoring", {})
-    c.keys(sc, "scoring", ("steps", "time", "grasp", "drops_to_zero", "pass_mark", "must_complete"))
+    c.keys(sc, "scoring", ("steps", "time", "grasp", "drops_to_zero", "touches_to_zero", "pass_mark", "must_complete"))
     scoring = dict(steps=c.num(sc, "steps", "scoring", 60, lo=0), time=c.num(sc, "time", "scoring", 20, lo=0),
                    grasp=c.num(sc, "grasp", "scoring", 20, lo=0),
                    drops_to_zero=c.num(sc, "drops_to_zero", "scoring", 3, lo=0, lo_open=True),
+                   touches_to_zero=c.num(sc, "touches_to_zero", "scoring", 10, lo=0, lo_open=True),
                    pass_mark=c.num(sc, "pass_mark", "scoring", 50, lo=0, hi=100),
                    must_complete=sc.get("must_complete", ["reach"]))
     if not (isinstance(scoring["must_complete"], list) and all(isinstance(x, str) for x in scoring["must_complete"])):
@@ -433,8 +457,9 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
     # ---- objects
     objects, groups = {}, {}
     obj_keys = {"box": ("size",), "sphere": ("diameter",), "cylinder": ("diameter", "height"),
-                "cup": ("diameter", "height", "wall", "bottom", "segments")}
-    common = ("shape", "color", "material", "start", "start_in", "yaw_deg", "pitch_deg", "mass", "friction",
+                "cup": ("diameter", "height", "wall", "bottom", "segments"),
+                "ring": ("diameter", "thickness", "segments")}
+    common = ("shape", "color", "colors", "material", "start", "start_in", "yaw_deg", "pitch_deg", "mass", "friction",
               "condim", "graspable", "count")
     for gname, o in (raw.get("objects") or {}).items():
         w = f"objects.{gname}"
@@ -459,6 +484,11 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
             r = (dia or 0.04) / 2
             if shape == "sphere":
                 half = [r, 0, 0]
+            elif shape == "ring":                      # diameter: outside; thickness: of its tube
+                t = c.num(o, "thickness", w, 0.012, lo=0.004, hi=0.05)
+                if 2 * t >= r:
+                    c.err(f"{w}.thickness", "the ring is too thick for its diameter (no hole left)")
+                half = [r - t / 2, t / 2, 0]
             else:
                 h = c.num(o, "height", w, None, lo=0.004, hi=0.5)
                 if h is None and "height" not in o:
@@ -470,14 +500,14 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
         if start is None and start_in is None:
             c.err(w, "'start' is missing: [x, y] on the table (or start_in = \"<cup>\")")
         pitch = math.radians(c.num(o, "pitch_deg", w, 0.0, lo=-180, hi=180))
-        if pitch and shape != "box":
-            c.err(f"{w}.pitch_deg", "only boxes can start tipped over")
+        if pitch and shape not in ("box", "ring"):
+            c.err(f"{w}.pitch_deg", "only boxes and rings can start tipped over")
         mat = mat_ref(o, w)
         base = dict(shape=shape, half=half, rgba=c.color(o, "color", w, [0.7, 0.7, 0.7, 1]), material=mat,
                     start=tuple(start) if start else (0.0, 0.0), yaw=math.radians(c.num(o, "yaw_deg", w, 0.0)),
                     pitch=pitch, mass=c.num(o, "mass", w, 0.08, lo=0.001, hi=5.0),
                     friction=c.vec(o, "friction", w, 3, [1.2, 0.01, 0.001], lo=0.0),
-                    condim=c.num(o, "condim", w, 6 if shape in ("sphere", "cup") else 4, integer=True),
+                    condim=c.num(o, "condim", w, 6 if shape in ("sphere", "cup", "ring") else 4, integer=True),
                     graspable=c.flag(o, "graspable", w, True), start_in=start_in, group=gname)
         if base["condim"] not in (1, 3, 4, 6):
             c.err(f"{w}.condim", f"should be 1, 3, 4 or 6, got {base['condim']}")
@@ -487,12 +517,22 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
                         cup_segments=c.num(o, "segments", w, 20, lo=6, hi=64, integer=True))
             if base["cup_wall"] * 2 >= half[0] * 2:
                 c.err(f"{w}.wall", "the wall is thicker than the cup is wide")
+        if shape == "ring":
+            base.update(ring_segments=c.num(o, "segments", w, 24, lo=8, hi=64, integer=True))
         names = [gname] if count == 1 else [f"{gname}_{i}" for i in range(count)]
         groups[gname] = names
+        colors = o.get("colors")
+        if colors is not None:                         # one colour per item (repeats if fewer)
+            if not isinstance(colors, list) or not colors:
+                c.err(f"{w}.colors", "should be a list of colours, e.g. [\"#e63946\", \"#457b9d\"]")
+                colors = None
+            else:
+                colors = [c.color({"x": v}, "x", f"{w}.colors", [0.7, 0.7, 0.7, 1]) for v in colors]
         for i, n in enumerate(names):
             if n in objects:
                 c.err(w, f"the name '{n}' is used twice")
-            objects[n] = Obj(name=n, index_in_group=i, **base)
+            item = dict(base, rgba=colors[i % len(colors)]) if colors else base
+            objects[n] = Obj(name=n, index_in_group=i, **item)
     for o in objects.values():
         w = f"objects.{o.group}"
         if o.start_in is not None:
@@ -512,7 +552,11 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
                  "slot": ("object", "margin", "symmetry_deg", "line", "color"),
                  "bin": ("inner_size", "wall_height", "wall", "color"),
                  "bowl": ("inner_diameter", "wall_height", "wall", "bottom", "segments", "material"),
-                 "holder": ("post_spacing", "post_size", "base_size", "material")}
+                 "holder": ("post_spacing", "post_size", "base_size", "material"),
+                 "peg": ("height", "tilt_deg", "length", "radius", "color"),
+                 "wire": ("points", "radius", "sleeve_length", "loop_diameter", "loop_thickness", "handle_length",
+                          "color"),
+                 "platform": ("size", "material", "color")}
     for name, mk in (raw.get("markers") or {}).items():
         w = f"markers.{name}"
         if not isinstance(mk, dict):
@@ -558,9 +602,45 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
             pr.update(post_spacing=c.vec(mk, "post_spacing", w, 2, [0.034, 0.11], lo=0.0),
                       post_half=[x / 2 for x in c.vec(mk, "post_size", w, 3, [0.007, 0.007, 0.05], lo=0.001)],
                       base_half=[x / 2 for x in c.vec(mk, "base_size", w, 3, [0.044, 0.11, 0.006], lo=0.001)])
+        elif kind == "peg":
+            # a post `height` tall, the peg leaving its top tilted by tilt_deg from straight up,
+            # toward yaw_deg (0 = straight up, 90 = level)
+            h = c.num(mk, "height", w, 0.0, lo=0.0, hi=0.4)
+            tilt = math.radians(c.num(mk, "tilt_deg", w, 0.0, lo=0.0, hi=90.0))
+            ln = c.num(mk, "length", w, 0.09, lo=0.02, hi=0.3)
+            rad = c.num(mk, "radius", w, 0.008, lo=0.002, hi=0.04)
+            yaw = math.radians(c.num(mk, "yaw_deg", w, 0.0))
+            u = [math.sin(tilt) * math.cos(yaw), math.sin(tilt) * math.sin(yaw), math.cos(tilt)]
+            if tilt > math.radians(30) and h < 0.05:
+                c.err(f"{w}.height", f"a peg tilted {math.degrees(tilt):.0f} deg needs a post (height at least "
+                                     f"0.05 m), so a ring fits on it above the table")
+            pr.update(height=h, tilt=tilt, length=ln, radius=rad, dir=u)
+        elif kind == "platform":                      # a fixed block to build on: size = [x, y, height]
+            pr.update(half=[x / 2 for x in c.vec(mk, "size", w, 3, [0.14, 0.14, 0.03], lo=0.005)])
+        elif kind == "wire":
+            pts = mk.get("points")
+            ok = (isinstance(pts, list) and len(pts) >= 2 and all(
+                isinstance(q, list) and len(q) == 3
+                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in q) for q in pts))
+            if not ok:
+                c.err(f"{w}.points", "should be a list of at least 2 points [forward, left, height above the table] "
+                                     "from the marker's pos")
+                pts = [[0, -0.1, 0.12], [0, 0.1, 0.12]]
+            for k, q in enumerate(pts):
+                if not 0.03 <= q[2] <= 0.5:
+                    c.err(f"{w}.points[{k + 1}]", f"the height (3rd number) should be 0.03 to 0.5 m, got {q[2]}")
+                c.on_table((pos[0] + q[0], pos[1] + q[1]), f"{w}.points[{k + 1}]", arm.base)
+            pr.update(points=[[float(x) for x in q] for q in pts],
+                      radius=c.num(mk, "radius", w, 0.0025, lo=0.0005, hi=0.02),
+                      sleeve=c.num(mk, "sleeve_length", w, 0.04, lo=0.0, hi=0.2),
+                      loop_r=c.num(mk, "loop_diameter", w, 0.05, lo=0.01, hi=0.2) / 2,
+                      loop_t=c.num(mk, "loop_thickness", w, 0.005, lo=0.001, hi=0.02),
+                      handle=c.num(mk, "handle_length", w, 0.12, lo=0.03, hi=0.3))
+            if pr["loop_r"] - pr["loop_t"] / 2 <= pr["radius"]:
+                c.err(f"{w}.loop_diameter", "the loop is too small to go around the wire")
         markers[name] = Marker(name=name, kind=kind, pos=tuple(pos),
                                yaw=math.radians(c.num(mk, "yaw_deg", w, 0.0)),
-                               rgba=c.color(mk, "color", w, None), material=mat_ref(mk, w) if kind in ("bowl", "holder") else None,
+                               rgba=c.color(mk, "color", w, None), material=mat_ref(mk, w) if kind in ("bowl", "holder", "platform") else None,
                                p=pr)
 
     # ---- phases
@@ -577,7 +657,7 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
         kind = c.text(ph, "kind", w, "task", ("pair", "task", "done"))
         allowed = ("key", "kind", "title", "text")
         if kind == "task":
-            allowed += ("scored", "time_limit_s", "rotation", "objects", "markers", "steps")
+            allowed += ("scored", "time_limit_s", "rotation", "objects", "markers", "steps", "repeat", "target_rounds")
         c.keys(ph, w, allowed, required=("key", "title", "text") + (("time_limit_s", "steps") if kind == "task" else ()))
         key = c.text(ph, "key", w, f"phase{i}")
         if key and not key.replace("_", "").isalnum():
@@ -601,7 +681,13 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
                     P.markers.append(mname)
             P.graspable = [n for n in P.objects if objects[n].graspable]
             P.steps = _steps(c, ph.get("steps", []), w, P, objects, groups, markers, arm)
-            _check_overlaps(c, w, P, objects)
+            P.repeat = c.flag(ph, "repeat", w, False)
+            P.target_rounds = c.num(ph, "target_rounds", w, 1, lo=1, hi=50, integer=True)
+            if P.repeat and any(st.type in ("reach", "stack", "follow_wire") for st in P.steps):
+                c.err(f"{w}.repeat", "rounds work with placing tasks (not reach, stack or follow_wire steps)")
+            # (blocks of a stack step appear one at a time at the supply: they may share a start)
+            later = {n for st in P.steps if st.type == "stack" for n in st.objects}
+            _check_overlaps(c, w, P, objects, skip=later)
         phases.append(P)
     keys = [p.key for p in phases]
     for k in set(keys):
@@ -634,9 +720,10 @@ def _steps(c: _Checker, raw_steps, w, P: Phase, objects, groups, markers, arm) -
     fields = {"reach": ("target",), "place_in_zone": ("object", "zone"), "place_in_slot": ("object", "slot"),
               "place_in_bin": ("object", "bin"), "remove_from": ("object", "holder", "distance"),
               "lay_flat": ("object", "zone"), "pour_into": ("objects", "container", "count"),
-              "set_upright": ("object",)}
+              "set_upright": ("object",), "hang_on": ("object", "peg"), "follow_wire": ("wire",),
+              "stack": ("objects", "platform", "supply", "target_height")}
     marker_kind = {"zone": ("zone",), "slot": ("slot",), "bin": ("bin",), "holder": ("holder",),
-                   "container": ("bowl", "bin")}
+                   "container": ("bowl", "bin"), "peg": ("peg",), "wire": ("wire",), "platform": ("platform",)}
     for i, s in enumerate(raw_steps):
         ws = f"{w}.steps[{i + 1}]"
         if not isinstance(s, dict):
@@ -656,7 +743,7 @@ def _steps(c: _Checker, raw_steps, w, P: Phase, objects, groups, markers, arm) -
             if st.object is not None and st.object not in P.objects:
                 c.err(f"{ws}.object", f"'{st.object}' isn't one of this phase's objects ({', '.join(P.objects) or 'none'})")
                 st.object = None
-        for mk in ("zone", "slot", "bin", "holder", "container"):
+        for mk in ("zone", "slot", "bin", "holder", "container", "peg", "wire", "platform"):
             if mk in req:
                 st.marker = c.text(s, mk, ws, None)
                 if st.marker is not None:
@@ -677,7 +764,15 @@ def _steps(c: _Checker, raw_steps, w, P: Phase, objects, groups, markers, arm) -
             c.err(f"{ws}.slot", f"the outline '{st.marker}' is made for '{markers[st.marker].p['object']}', not '{st.object}'")
         if typ == "remove_from":
             st.distance = c.num(s, "distance", ws, 0.07, lo=0.01, hi=1.0)
-        if typ == "pour_into":
+        if typ == "hang_on" and st.object and objects[st.object].shape != "ring":
+            c.err(f"{ws}.object", f"only rings hang on pegs ('{st.object}' is a {objects[st.object].shape})")
+        if typ == "stack":
+            st.supply = c.text(s, "supply", ws, None)
+            if st.supply is not None and (st.supply not in P.markers or markers[st.supply].kind != "zone"):
+                c.err(f"{ws}.supply", f"'{st.supply}' should be a zone of this phase (where the next block appears)")
+                st.supply = None
+            st.target_height = c.num(s, "target_height", ws, 0.25, lo=0.02, hi=1.0)
+        if typ in ("pour_into", "stack"):
             g = c.text(s, "objects", ws, None)
             if g is not None and g not in groups:
                 c.err(f"{ws}.objects", f"no object group '{g}'")
@@ -686,8 +781,8 @@ def _steps(c: _Checker, raw_steps, w, P: Phase, objects, groups, markers, arm) -
                 missing = [n for n in st.objects if n not in P.objects]
                 if missing:
                     c.err(f"{ws}.objects", f"'{g}' isn't in this phase's objects")
-            st.count = c.num(s, "count", ws, 1, lo=1, integer=True)
-            if st.objects and st.count > len(st.objects):
+            st.count = c.num(s, "count", ws, 1, lo=1, integer=True) if typ == "pour_into" else 0
+            if typ == "pour_into" and st.objects and st.count > len(st.objects):
                 c.err(f"{ws}.count", f"{st.count} needed but there are only {len(st.objects)}")
         if not st.label:
             st.label = _default_label(st)
@@ -703,6 +798,10 @@ def _steps(c: _Checker, raw_steps, w, P: Phase, objects, groups, markers, arm) -
     types = {s.type for s in out}
     if "reach" in types and len(types) > 1:
         c.err(f"{w}.steps", "reach steps can't be mixed with other steps in one phase")
+    if "follow_wire" in types and len(out) > 1:
+        c.err(f"{w}.steps", "a follow_wire step is a phase of its own (the robot holds the wand)")
+    if "stack" in types and len(out) > 1:
+        c.err(f"{w}.steps", "a stack step is a phase of its own")
     return out
 
 
@@ -710,16 +809,17 @@ def _default_label(st: Step) -> str:
     o = (st.object or "").replace("_", " ")
     return {"reach": "touch the target", "place_in_zone": f"{o} in the zone", "place_in_slot": f"{o} in its outline",
             "place_in_bin": f"{o} in its bin", "remove_from": f"{o} out of the holder", "lay_flat": f"{o} flat",
-            "pour_into": "pour", "set_upright": f"{o} upright"}[st.type]
+            "pour_into": "pour", "set_upright": f"{o} upright", "hang_on": f"{o} on its peg",
+            "follow_wire": "along the wire", "stack": "tower"}[st.type]
 
 
 def _bound_r(o: Obj) -> float:
     return math.hypot(o.half[0], o.half[1]) if o.shape == "box" else o.half[0]
 
 
-def _check_overlaps(c: _Checker, w, P: Phase, objects):
+def _check_overlaps(c: _Checker, w, P: Phase, objects, skip=()):
     """Objects of one phase must not start inside each other (balls in a cup are fine)."""
-    obs = [objects[n] for n in P.objects if objects[n].start_in is None]
+    obs = [objects[n] for n in P.objects if objects[n].start_in is None and n not in skip]
     for i, a in enumerate(obs):
         for b in obs[i + 1:]:
             d = math.hypot(a.start[0] - b.start[0], a.start[1] - b.start[1])

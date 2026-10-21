@@ -32,6 +32,8 @@ min_height = 0.02              # the gripper's pinch point never goes lower than
 max_speed = 0.4                # [m/s] top speed of the gripper (a real UR5e can do 1.0); faster hand motion is capped
 max_turn_deg = 90              # [deg/s] its top turning speed
 servo_stiffness = 1.0          # x the UR5e's own joint motor stiffness (higher = follows faster; 3 was shaky)
+ik = "qp"                      # "qp": joint limits and speeds kept exactly, the arm never pushes into the table; "dls": the old IK
+table_clearance = 0.02         # [m] the wrist and forearm keep at least this far above the table (ik = "qp")
 
 [controls]
 motion_scale = 1.0             # the robot moves this many cm per cm the phone moves
@@ -40,9 +42,19 @@ smoothing_s = 0.12             # smooths the phone's motion (it sends ~30 positi
 
 # ---------------------------------------------------------------------------- what the candidate sees
 [view]                         # the monitor's starting camera (the candidate can turn and zoom it)
-eye = [-0.30, 0.0, 1.52]       # camera position [x, y, height above the floor]: the robot's "head"
-look_at = [0.47, -0.02, 0.75]  # the point it looks at [x, y, height above the floor] (the table is 0.75 high)
-fov_deg = 62                   # field of view (up-down)
+eye = [-0.25, -0.05, 1.65]     # camera position [x, y, height above the floor]: above the robot's "head", so it sees into the cup
+look_at = [0.50, -0.10, 0.75]  # the point it looks at [x, y, height above the floor] (the table is 0.75 high)
+fov_deg = 55                   # field of view (up-down)
+arm_opacity = 0.25             # the shoulder, upper arm and forearm are drawn see-through (1 = solid) so they don't hide the work
+table_grid = 0.10              # faint lines on the table every this many metres (0 = none): distances and heights are easier to judge
+
+[side_view]                    # a small second view in the corner, from the side at table height: shows how high the gripper is
+enabled = true
+from = "left"                  # which side it looks from ("left": from the robot's left, so the arm is behind the gripper)
+size = 0.28                    # its width, as a fraction of the screen's width
+distance = 0.6                 # [m] from the gripper (it follows the gripper); things more than 15 cm nearer are cut away
+height = 0.08                  # [m] how high above the table it looks
+fov_deg = 35
 
 [depth_cues]                   # a ring on the table below the gripper and a line down to it
 enabled = true
@@ -100,6 +112,12 @@ color = [0.95, 0.95, 0.93]
 specular = 0.6
 shininess = 0.8
 roughness = 0.25
+
+[materials.glass]              # clear plastic (the cup): see-through, so the balls inside show
+color = [0.86, 0.93, 1.0, 0.28]  # the 4th number: how opaque (0 = invisible, 1 = solid)
+specular = 0.9
+shininess = 0.9
+roughness = 0.08
 
 [materials.ceramic_blue]       # the bowl
 color = [0.55, 0.68, 0.85]
@@ -200,27 +218,72 @@ pitch_deg = 90
 mass = 0.2
 friction = [1.2, 0.01, 0.001]
 
-[objects.cup]                  # a glazed mug (140 g), hollow so the balls really pour out
+[objects.cup]                  # a clear plastic cup (140 g), hollow so the balls really pour out
 shape = "cup"
-diameter = 0.068
-height = 0.09
+diameter = 0.08
+height = 0.07
 wall = 0.004
 bottom = 0.006
 segments = 20                  # its round wall is made of this many pieces
-material = "ceramic"
+material = "glass"            # see-through: the balls inside can be seen from any side
 start = [0.42, -0.14]
 mass = 0.14
 friction = [1.0, 0.02, 0.001]  # twisting friction: it doesn't spin in the fingers when tipped
 
-[objects.ball]                 # five small balls in the cup, to pour into the bowl
+[objects.ball]                 # four balls in the cup, to pour into the bowl
 shape = "sphere"
-count = 5
-diameter = 0.018
-color = [0.98, 0.8, 0.1]
+count = 4
+diameter = 0.025
+color = [0.95, 0.32, 0.08]     # red-orange: stands out against the blue bowl and the white table
 start_in = "cup"
 mass = 0.01
 friction = [0.6, 0.005, 0.0005]
 graspable = false
+
+# rings for "ring on pegs": standing on edge in small holders (easy to take from above), each to
+# hang on the peg straight ahead of it, of its colour. diameter: outside; thickness: of the tube
+[objects.ring_red]
+shape = "ring"
+diameter = 0.10                # a big hole: 2.8 cm around the peg on every side
+thickness = 0.014
+segments = 28
+color = [0.86, 0.16, 0.13]
+start = [0.42, -0.36]
+pitch_deg = 90                 # standing on its edge
+mass = 0.03
+friction = [1.2, 0.02, 0.001]
+
+[objects.ring_blue]
+shape = "ring"
+diameter = 0.10                # a big hole: 2.8 cm around the peg on every side
+thickness = 0.014
+segments = 28
+color = [0.15, 0.42, 0.9]
+start = [0.42, -0.07]
+pitch_deg = 90                 # standing on its edge
+mass = 0.03
+friction = [1.2, 0.02, 0.001]
+
+[objects.ring_green]
+shape = "ring"
+diameter = 0.10                # a big hole: 2.8 cm around the peg on every side
+thickness = 0.014
+segments = 28
+color = [0.14, 0.7, 0.3]
+start = [0.40, 0.17]
+pitch_deg = 90                 # standing on its edge
+mass = 0.03
+friction = [1.2, 0.02, 0.001]
+
+# blocks for the tower: they appear one at a time on the supply zone (start = the supply's pos)
+[objects.tower_block]
+shape = "box"
+count = 6
+size = [0.05, 0.05, 0.05]
+colors = ["#e63946", "#f4a261", "#e9c46a", "#2a9d8f", "#457b9d", "#9b5de5"]
+start = [0.42, -0.30]
+mass = 0.06
+friction = [1.0, 0.01, 0.001]  # wood on wood
 
 # ---------------------------------------------------------------------------- markers
 # Fixed things on the table: they don't move when touched. Each phase lists the markers it shows.
@@ -230,6 +293,8 @@ graspable = false
 #   kind = "bin"     a box with walls (inner_size, wall_height, wall thickness)
 #   kind = "bowl"    a round bowl (inner_diameter, wall_height, wall, bottom, segments)
 #   kind = "holder"  posts that hold a book standing up (post_spacing = [across, along] the book)
+#   kind = "peg"     a post with a peg at any angle, to hang a ring on (see the pegs below)
+#   kind = "wire"    a buzz wire: a curve through points; the robot holds the wand that goes with it
 #   pos = [x, y];  yaw_deg turns it
 
 [markers.zone]                 # practice 2: the green square
@@ -306,11 +371,107 @@ color = [0.15, 0.8, 0.35]
 kind = "bowl"
 pos = [0.62, -0.20]
 inner_diameter = 0.15
-wall_height = 0.035
+wall_height = 0.025             # low enough that the balls inside can be seen from the candidate's view
 wall = 0.004
 bottom = 0.005
 segments = 28
 material = "ceramic_blue"
+
+# ---- ring on pegs: a holder per ring in a row in front, a peg straight ahead of each ring
+[markers.ring_holder_red]
+kind = "holder"
+pos = [0.42, -0.36]
+post_spacing = [0.025, 0.05]   # [across the ring, along it]
+post_size = [0.007, 0.007, 0.035]
+base_size = [0.045, 0.11, 0.004]
+material = "wood"
+
+[markers.ring_holder_blue]
+kind = "holder"
+pos = [0.42, -0.07]
+post_spacing = [0.025, 0.05]   # [across the ring, along it]
+post_size = [0.007, 0.007, 0.035]
+base_size = [0.045, 0.11, 0.004]
+material = "wood"
+
+[markers.ring_holder_green]
+kind = "holder"
+pos = [0.40, 0.17]
+post_spacing = [0.025, 0.05]   # [across the ring, along it]
+post_size = [0.007, 0.007, 0.035]
+base_size = [0.045, 0.11, 0.004]
+material = "wood"
+
+#   kind = "peg"   a post `height` tall; the peg leaves its top tilted by tilt_deg from straight
+#                  up (0 = up, 90 = level), toward yaw_deg (180 = toward the robot); length, radius.
+#                  The ring stands upright in its holder: a peg at tilt_deg needs it turned 90 - tilt_deg.
+[markers.peg_red]              # 45 deg: tilt the ring 45 deg (on the arm's side, where it tilts most easily)
+kind = "peg"
+pos = [0.72, -0.36]
+height = 0.10
+tilt_deg = 45
+yaw_deg = 180
+length = 0.11
+radius = 0.008
+color = [0.86, 0.16, 0.13]
+
+[markers.peg_blue]             # tilt the ring 30 deg
+kind = "peg"
+pos = [0.70, -0.07]
+height = 0.13
+tilt_deg = 60
+yaw_deg = 180
+length = 0.11
+radius = 0.008
+color = [0.15, 0.42, 0.9]
+
+[markers.peg_green]            # almost level: the ring goes on nearly as it is (turn ~10 deg)
+kind = "peg"
+pos = [0.60, 0.16]
+height = 0.17
+tilt_deg = 80
+yaw_deg = 180
+length = 0.11
+radius = 0.008
+color = [0.14, 0.7, 0.3]
+
+# ---- tower: where the blocks appear, and the platform to build on
+[markers.tower_supply]
+kind = "zone"
+pos = [0.42, -0.30]
+size = [0.08, 0.08]
+line = 0.008
+color = [0.95, 0.75, 0.15]
+
+#   kind = "platform"  a fixed block to build on (size = [x, y, height]); material
+[markers.tower_platform]
+kind = "platform"
+pos = [0.58, 0.02]
+size = [0.14, 0.14, 0.03]
+material = "wood"
+
+# ---- buzz wire. kind = "wire": a smooth curve through points [forward, left, height above the
+# table] from pos; red rubber sleeves at both ends (touching them doesn't count). The robot holds
+# a wand with a loop (loop_diameter: inside the metal) handle_length behind the loop's centre.
+[markers.wire]                 # flat: it bends left and right
+kind = "wire"
+pos = [0.52, -0.10]
+points = [[0.0, -0.20, 0.13], [0.035, -0.10, 0.13], [-0.035, 0.0, 0.13], [0.035, 0.10, 0.13], [0.0, 0.20, 0.13]]
+radius = 0.0025
+sleeve_length = 0.04
+loop_diameter = 0.05
+loop_thickness = 0.005
+handle_length = 0.12
+
+[markers.wire_3d]              # also goes up and down
+kind = "wire"
+pos = [0.52, -0.10]
+points = [[0.0, -0.20, 0.12], [0.03, -0.10, 0.17], [-0.03, 0.0, 0.10], [0.03, 0.10, 0.17], [0.0, 0.20, 0.12]]
+radius = 0.0025
+sleeve_length = 0.04
+loop_diameter = 0.05
+loop_thickness = 0.005
+handle_length = 0.12
 
 # ---------------------------------------------------------------------------- phases
 # The test runs these in order. kind = "pair" (connect the phone) comes first, kind = "done"
@@ -329,6 +490,13 @@ material = "ceramic_blue"
 #     { type = "lay_flat",      object = "...", zone = "..." }      lying on its thin side in a zone, let go
 #     { type = "pour_into",     objects = "<group>", container = "...", count = 4 }  so many in a bowl/bin
 #     { type = "set_upright",   object = "..." }                    standing upright on the table, let go
+#     { type = "hang_on",       object = "<ring>", peg = "..." }    the peg through the ring, let go
+#     { type = "stack",         objects = "<group>", platform = "...", supply = "<zone>", target_height = 0.25 }
+#                                                                   tower: blocks appear one at a time on the supply;
+#                                                                   stack them on the platform (best still height, falls)
+#     { type = "follow_wire",   wire = "..." }                      buzz wire: the loop to the far end without
+#                                                                   touching (a phase of its own; scored on how
+#                                                                   far, time, and touches: [scoring] touches_to_zero)
 #   Optional in a step: id = "..." (a name), label = "..." (shown to the candidate),
 #   after = "<id>" (only counts once that step is done). Place steps count while they hold
 #   (taking the object out again undoes them); the others stay done once done.
@@ -403,9 +571,37 @@ markers = ["holder", "mat", "bowl"]
 steps = [
   { id = "book_out", type = "remove_from", object = "book", holder = "holder", distance = 0.07, label = "book out of the holder" },
   { id = "book_flat", type = "lay_flat", object = "book", zone = "mat", after = "book_out", label = "book flat on the mat" },
-  { id = "poured", type = "pour_into", objects = "ball", container = "bowl", count = 4, label = "balls in the bowl" },
+  { id = "poured", type = "pour_into", objects = "ball", container = "bowl", count = 3, label = "balls in the bowl" },
   { id = "cup_up", type = "set_upright", object = "cup", after = "poured", label = "cup upright again" },
 ]
+
+[[phases]]
+key = "rings"
+title = "Ring on pegs"
+scored = true
+time_limit_s = 300
+rotation = "full"
+repeat = true                  # all three on their pegs: a new round (the rings back in their holders) until time is up
+target_rounds = 3              # 3 rounds (9 rings) score full marks
+text = "Hang each ring on the peg straight ahead of it, the same colour. The pegs lean at different angles: tilt the ring with your phone so the peg goes through the hole, then let go. When all three are on, they come back for the next round: as many rounds as you can."
+objects = ["ring_red", "ring_blue", "ring_green"]
+markers = ["ring_holder_red", "ring_holder_blue", "ring_holder_green", "peg_red", "peg_blue", "peg_green"]
+steps = [
+  { type = "hang_on", object = "ring_red", peg = "peg_red", label = "red ring" },
+  { type = "hang_on", object = "ring_blue", peg = "peg_blue", label = "blue ring" },
+  { type = "hang_on", object = "ring_green", peg = "peg_green", label = "green ring" },
+]
+
+[[phases]]
+key = "tower"
+title = "Tower"
+scored = true
+time_limit_s = 240
+rotation = "yaw"
+text = "Take each block from the yellow square and stack them on the wooden platform. Build as high as you can: lower each block gently onto the one below, then RELEASE. A new block appears when you take one."
+objects = ["tower_block"]
+markers = ["tower_supply", "tower_platform"]
+steps = [{ type = "stack", objects = "tower_block", platform = "tower_platform", supply = "tower_supply", target_height = 0.25 }]
 
 [[phases]]
 key = "done"

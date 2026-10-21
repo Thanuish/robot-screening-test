@@ -71,10 +71,92 @@ window.addEventListener('teleop-scene', () => {      // (scene reloaded: rebuild
 });
 requestAnimationFrame(updateCues);
 
+// ------------------------------------------------------------ view aids ([view], [side_view])
+// See-through arm: the shoulder, upper arm and forearm are drawn faint so they don't hide the
+// work. Table grid: faint lines every few cm, for judging distances. Side view: a second small
+// view from the side at table height, following the gripper, so its height is seen directly.
+const VIEW = CFG.view, SIDE = VIEW.side;
+let sideCam = null, sideFrame = null, sideLook = null;
+function setupViewAids() {
+  const T = window.__teleop, THREE = T.THREE;
+  if (VIEW.arm_opacity < 1) {
+    for (const link of ['shoulder_link', 'upper_arm_link', 'forearm_link']) {
+      const b = T.body(`${CFG.arm}_${link}`);
+      if (!b) continue;
+      b.traverse(o => {
+        if (!o.isMesh) return;
+        o.material = o.material.clone();               // (materials are shared with other parts)
+        Object.assign(o.material, { transparent: true, opacity: VIEW.arm_opacity, depthWrite: true });  // (hides its own inside)
+        o.renderOrder = 5;
+        o.castShadow = false;
+      });
+    }
+  }
+  const old = T.mjRoot.getObjectByName('screen_grid');
+  if (old) T.mjRoot.remove(old);                       // (scene reloaded)
+  if (VIEW.table_grid > 0) {
+    const step = VIEW.table_grid, pts = [];
+    const x0 = -0.15, x1 = 0.95, y0 = -0.75, y1 = 0.75, z = TABLE_Z + 0.0008;   // the table top
+    for (let x = Math.ceil(x0 / step) * step; x <= x1 + 1e-9; x += step) pts.push(x, y0, z, x, y1, z);
+    for (let y = Math.ceil(y0 / step) * step; y <= y1 + 1e-9; y += step) pts.push(x0, y, z, x1, y, z);
+    const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const grid = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x5a6070, transparent: true, opacity: 0.22 }));
+    grid.name = 'screen_grid';
+    T.mjRoot.add(grid);
+  }
+  if (SIDE.enabled) {
+    sideCam = new THREE.PerspectiveCamera(SIDE.fov, 1.5, 0.02, 10);
+    if (!sideFrame) {
+      sideFrame = document.createElement('div');
+      sideFrame.id = 'sideView';
+      sideFrame.innerHTML = '<span>SIDE VIEW</span>';
+      document.body.appendChild(sideFrame);
+    }
+    if (!T.afterRender.includes(drawSideView)) T.afterRender.push(drawSideView);
+  }
+}
+function sideRect() {                                  // [x, y from the bottom, w, h] in CSS pixels
+  const w = Math.round(window.innerWidth * SIDE.size), h = Math.round(w / 1.5);
+  const top = 120;
+  return [window.innerWidth - w - 18, window.innerHeight - top - h, w, h];
+}
+function drawSideView(renderer, scene) {
+  const T = window.__teleop, THREE = T.THREE;
+  const r = T.body(`${CFG.arm}_gripper_right_pad`), l = T.body(`${CFG.arm}_gripper_left_pad`);
+  if (!r || !l) { sideFrame.style.display = 'none'; return; }
+  const p = new THREE.Vector3(), q = new THREE.Vector3();
+  r.getWorldPosition(p); l.getWorldPosition(q);
+  p.add(q).multiplyScalar(0.5);
+  T.mjRoot.worldToLocal(p);                            // the gripper, MuJoCo frame
+  const target = new THREE.Vector3(p.x, p.y, TABLE_Z + SIDE.height);
+  if (!sideLook) sideLook = target.clone();
+  sideLook.lerp(target, 0.12);                         // follows smoothly (no shaking)
+  const dir = SIDE.side === 'left' ? 1 : -1;
+  const eye = sideLook.clone().add(new THREE.Vector3(0, dir * SIDE.distance, 0.02));
+  sideCam.position.copy(T.mjRoot.localToWorld(eye.clone()));
+  sideCam.lookAt(T.mjRoot.localToWorld(sideLook.clone()));
+  const [x, y, w, h] = sideRect();
+  sideCam.aspect = w / h;
+  // only what's within ~15 cm of the gripper (across the view) is shown: things nearer the side
+  // camera (another object, the book holder) are cut away instead of hiding the gripper
+  sideCam.near = Math.max(0.02, SIDE.distance - 0.15);
+  sideCam.updateProjectionMatrix();
+  Object.assign(sideFrame.style, { display: 'block', left: `${x}px`, bottom: `${y}px`, width: `${w}px`, height: `${h}px` });
+  renderer.setScissorTest(true);
+  renderer.setScissor(x, y, w, h);
+  renderer.setViewport(x, y, w, h);
+  renderer.render(scene, sideCam);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+}
+window.addEventListener('teleop-scene', setupViewAids);
+if (window.__teleop) setupViewAids();
+
+let wasHoming = false;
 window.addEventListener('teleop-status', (ev) => {
   const g = ev.detail.task_game;
   if (!g) return;
-  $('phaseTitle').textContent = g.title;
+  $('phaseTitle').textContent = g.round ? `${g.title}  ·  round ${g.round}` : g.title;
   $('phaseText').textContent = g.text;
   const pairing = g.kind === 'pair';
   $('pair').classList.toggle('hidden', !pairing);
@@ -90,6 +172,25 @@ window.addEventListener('teleop-status', (ev) => {
     for (let i = 0; i < g.steps_total; i++) steps.appendChild(document.createElement('span'));
   }
   [...steps.children].forEach((s, i) => s.classList.toggle('on', i < g.steps_done));
+  // tower: its height now and the best that stood, blocks left, falls
+  const tw = g.tower;
+  $('taskHud').classList.toggle('hidden', !tw);
+  steps.classList.toggle('hidden', !!tw || !!g.wire);
+  if (tw) {
+    $('taskHud').innerHTML = `Tower <b>${Math.round(tw.height * 100)} cm</b> (best ${Math.round(tw.best * 100)} cm, ` +
+      `goal ${Math.round(tw.target * 100)} cm)  ·  blocks left ${tw.left}  ·  falls ${tw.falls}`;
+  }
+  // buzz wire: touches, how far along, a red glow while touching, a hint when the loop is off
+  const w = g.wire;
+  $('wireHud').classList.toggle('hidden', !w);
+
+  $('buzzFlash').classList.toggle('on', !!(w && w.touching));
+  if (w) {
+    $('wireTouches').textContent = `Touches: ${w.touches}`;
+    $('wireTouches').classList.toggle('hit', w.touching);
+    $('wireBar').firstChild.style.width = `${Math.round(100 * w.progress)}%`;
+    $('wireOff').textContent = w.off && g.intro === 0 ? 'The loop is off the wire: bring it back around the wire' : '';
+  }
   // timer and countdown
   if (g.limit) {
     const left = g.intro > 0 ? g.limit : g.limit - g.time;
@@ -101,6 +202,8 @@ window.addEventListener('teleop-status', (ev) => {
     $('practice').textContent = '';
   }
   $('count').textContent = g.intro > 0 ? Math.ceil(g.intro) : '';
+  if (g.homing && !wasHoming) toast('Going home…');
+  wasHoming = !!g.homing;
   if (g.message && g.message !== lastMsg) toast(g.message);
   lastMsg = g.message;
 });

@@ -20,16 +20,25 @@ Step types (what the candidate has to do), checked 20 times a second:
     lay_flat       lying on its thin side in a zone, let go  } ("after": only once that
     pour_into      enough objects in a bowl / bin            }  step is done)
     set_upright    a cup standing upright again, let go      }
+    hang_on        a ring on its peg (the peg through it), let go   (counts while it holds)
+    follow_wire    buzz wire: the robot holds a wand; guide its loop along the wire to the end
+                   without touching it (touches and time touching counted; a phase of its own)
+    stack          tower: blocks appear one at a time on a supply zone; stack them on a platform as
+                   high as possible (best height that stood still 1 s; falls; a phase of its own)
+
+A phase with repeat = true starts a new round when all its steps are done (its objects back to
+their starts) and goes on until its time is up; rings hung (etc.) are counted over all rounds.
 
 All times are simulation seconds, so a slow computer doesn't penalise anyone. Each task phase is
 recorded as an episode (data/.../episode_XXXX.hdf5). results.json in the session folder holds
 the metrics and scores; the lobby (TEST_TELEOP/lobby.py) reads it.
 
 Score per scored task, 0..100 (weights from [scoring]; by default 60 / 20 / 20):
-      steps x steps completed / steps
+      steps x steps completed / steps         (buzz wire: how far along the wire)
     + time  x time left / time limit       (only if the task was completed)
     + grasp x grasp efficiency             (grasps that lifted something / grasp attempts,
-                                            minus 1/drops_to_zero per drop)
+                                            minus 1/drops_to_zero per drop; buzz wire: 1 minus
+                                            1/touches_to_zero per touch)
 The overall score is the mean of the scored tasks. Reach steps also measure path efficiency
 (straight-line distance / distance moved), the clearest sign of understanding the mapping.
 """
@@ -61,6 +70,42 @@ def _ang_err(a, b, period):
     return min(d, period - d)
 
 
+def _quat_of(R):
+    q = np.zeros(4)
+    mujoco.mju_mat2Quat(q, np.asarray(R, float).flatten())
+    return q
+
+
+def _mat_of(q):
+    R = np.zeros(9)
+    mujoco.mju_quat2Mat(R, np.asarray(q, float))
+    return R.reshape(3, 3)
+
+
+def _seg_dist(P, A, B):
+    """Smallest distance from each point of P (n x 3) to the segments A[i]-B[i] (m x 3)."""
+    AB = B - A
+    t = np.einsum("nmk,mk->nm", P[:, None, :] - A[None], AB) / np.maximum(np.einsum("mk,mk->m", AB, AB), 1e-12)
+    t = np.clip(t, 0, 1)
+    Q = A[None] + t[..., None] * AB[None]
+    return np.linalg.norm(P[:, None, :] - Q, axis=2).min(axis=1)
+
+
+def wand_frame(tangent, rotation="yaw"):
+    """The wand's orientation for a loop around a wire running along `tangent`: its y axis along
+    the wire, x horizontal pointing back toward the robot (the handle, along -x, goes to the far
+    side of the wire: the gripper holds it there, so it doesn't hide the loop from the camera
+    behind the robot)."""
+    t = np.asarray(tangent, float)
+    t = t / np.linalg.norm(t)
+    if rotation == "yaw":                       # the loop stays upright: only the wire's heading
+        t = np.array([t[0], t[1], 0.0])
+        t /= np.linalg.norm(t)
+    x = np.cross([0.0, 0.0, 1.0], t)
+    x /= np.linalg.norm(x)
+    return np.stack([x, t, np.cross(x, t)], axis=1)
+
+
 def _jsonable(o):
     """numpy numbers in the metrics -> plain Python for results.json."""
     if isinstance(o, np.generic):
@@ -72,7 +117,18 @@ def score_task(m: dict, limit: float, w: dict) -> float:
     """0..100 for one scored task (see the module docstring); w = the [scoring] weights."""
     steps = m["steps_done"] / max(1, m["steps_total"])
     time_part = max(0.0, 1 - m["time_s"] / limit) if m["completed"] else 0.0
-    if m["grasp_attempts"]:
+    if "best_height" in m:                                 # tower: height, few falls, good grasps
+        h = min(1.0, m["best_height"] / max(1e-6, m["target_height"]))
+        eff = m["grasps"] / m["grasp_attempts"] if m["grasp_attempts"] else 0.0
+        return round(w["steps"] * h + w["time"] * max(0.0, 1 - m["falls"] / 3) * (h > 0) + w["grasp"] * min(1.0, eff), 1)
+    if "rounds" in m:                                      # rounds: how much was done over all rounds
+        done = m["items_done"] / max(1, m["target_items"])
+        eff = (m["grasps"] / m["grasp_attempts"] * max(0.0, 1 - m["drops"] / w["drops_to_zero"])
+               if m["grasp_attempts"] else 0.0)
+        return round((w["steps"] + w["time"]) * min(1.0, done) + w["grasp"] * min(1.0, eff), 1)
+    if "touches" in m:                                     # buzz wire: a clean run
+        eff = max(0.0, 1 - m["touches"] / w["touches_to_zero"]) if m["progress"] > 0 else 0.0
+    elif m["grasp_attempts"]:
         eff = m["grasps"] / m["grasp_attempts"] * max(0.0, 1 - m["drops"] / w["drops_to_zero"])
     else:
         eff = 0.0
@@ -95,6 +151,10 @@ class ScreenGame:
         (Path(sim.session.dir) / "screening.toml").write_bytes(text)
         # a real robot's pace: the gripper follows the phone at most this fast (a flick of the
         # wrist doesn't whip the arm around)
+        if self.cfg.arm.ik == "qp":                    # joint limits exact, the wrist kept off the table
+            c = self.cfg.arm.table_clearance
+            sim.arms.use_qp_ik(clearance={"pad": 0.003, "gripper": min(0.01, c), "link": c})
+            sim.arms.reset(sim.d)
         sim.arms.max_speed, sim.arms.max_turn = self.cfg.arm.max_speed, self.cfg.arm.max_turn
         sim.arms.teleop[self.side].pos_scale = self.cfg.motion_scale
         sim.arms.smoothing = self.cfg.smoothing or None
@@ -151,6 +211,19 @@ class ScreenGame:
         self.reaching = bool(ph.steps) and ph.steps[0].type == "reach"
         if self.reaching:
             self._show_target()
+        self.stack = None
+        stack_steps = [st for st in ph.steps if st.type == "stack"]
+        if stack_steps:
+            st = stack_steps[0]
+            for n in st.objects:                            # (they appear one at a time)
+                SS.place(info, d, n, "park")
+            self.stack = dict(step=st, queue=list(st.objects), out=[], on_tower=set(), still_since=None,
+                              plat=self.cfg.markers[st.marker], supply=self.cfg.markers[st.supply])
+            self._next_block()
+        self.wire = None
+        wire_steps = [st for st in ph.steps if st.type == "follow_wire"]
+        if wire_steps:
+            self._setup_wire(wire_steps[0])
         self.held = {n: False for n in ph.graspable}
         self.done = {st.id: False for st in ph.steps}
         self.in_bin = {st.object: None for st in ph.steps if st.type == "place_in_bin"}
@@ -160,8 +233,180 @@ class ScreenGame:
         self._prev_quat = None
         self.t0 = None
         self.intro_until = d.time + self.cfg.timing["countdown"] if ph.kind == "task" else None
+        self._glitch0 = self.sim.arms.teleop[s].glitches
         if ph.kind == "task":
             self.metrics[ph.key] = self._new_metrics(len(ph.steps))
+            if self.wire is not None:
+                self.metrics[ph.key].update(progress=0.0, touches=0, touch_time_s=0.0)
+            if self.stack is not None:
+                self.metrics[ph.key].update(height=0.0, best_height=0.0, falls=0, blocks_used=1,
+                                            target_height=self.stack["step"].target_height)
+                self.metrics[ph.key]["steps_total"] = 1
+            if ph.repeat:
+                self.metrics[ph.key].update(rounds=0, items_done=0, target_items=ph.target_rounds * len(ph.steps))
+
+    def _setup_wire(self, st):
+        """Buzz wire: the arm holds the wand, its loop around the start of the wire (on the red
+        sleeve), the loop square to the wire."""
+        from buzzwire.spline import Wire
+        mk = self.cfg.markers[st.marker]
+        W = Wire(SS.wire_points(mk), step=0.004)
+        s0 = min(mk.p["sleeve"] / 2, W.length / 4)
+        c0, t0 = W.at(s0)
+        Rw = wand_frame(t0, self.phase.rotation)
+        s = self.side
+        arms, info, d = self.sim.arms, self.info, self.d
+        site = info.ee_site[s]
+        # the gripper: pointing down, its fingers closing across the handle, behind the loop
+        _, q_home = arms.ik[s].fk(arms.home[s], d.qpos)
+        R_home = _mat_of(q_home)
+        yaw = np.arctan2(Rw[1, 1], Rw[0, 1]) - np.pi / 2       # (at home the fingers close along y)
+        Rz = np.array([[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]])
+        R_site = Rz @ R_home
+        pinch = c0 - mk.p["handle"] * Rw[:, 0]
+        q, err = arms.solve(d, s, pinch, _quat_of(R_site))
+        arms.hold(d, s, q)
+        arms.teleop[s].gripper = 0.78                          # (it holds the handle)
+        mujoco.mj_forward(self.m, d)
+        # the wand's pose relative to the gripper's (fixed while the phase lasts)
+        Rs, ps = d.site_xmat[site].reshape(3, 3).copy(), d.site_xpos[site].copy()
+        self.wire = dict(step=st, mk=mk, W=W, s=s0, q=q.copy(), R_rel=Rs.T @ Rw, p_rel=Rs.T @ (c0 - ps), touching=False,
+                         last_touch_end=-1.0, off=False, loop=SS._ring_points(mk.p["loop_r"], 28, "xz")[:-1],
+                         start_err=err)
+        self._move_wand()
+
+    def _move_wand(self):
+        w, d = self.wire, self.d
+        site = self.info.ee_site[self.side]
+        Rs, ps = d.site_xmat[site].reshape(3, 3), d.site_xpos[site]
+        R = Rs @ w["R_rel"]
+        p = ps + Rs @ w["p_rel"]
+        SS.move_wand(self.info, d, w["mk"].name, p, _quat_of(R))
+        return p, R
+
+    def _wire_tick(self, mt, dt):
+        """Every control tick: the wand follows the gripper; progress, touches, time touching."""
+        w = self.wire
+        self.sim.arms.teleop[self.side].gripper = 0.78     # (it holds the handle)
+        c, R = self._move_wand()
+        W, p = w["W"], w["mk"].p
+        if self.sim.arms.homing(self.side):              # (going back to the start: nothing counts)
+            w["touching"], w["off"] = False, False
+            return False
+        sc, dc = W.closest(c, near=w["s"], window=0.06)
+        around = dc < p["loop_r"] - p["loop_t"] / 2
+        w["off"] = not around
+        if around and sc <= w["s"] + 0.03:                   # (no jumping ahead off the wire)
+            w["s"] = max(w["s"], sc)
+        # the loop's metal against the wire, near where the loop is (sleeves don't count)
+        i0 = max(0, int(np.searchsorted(W.s, sc - 0.08)))
+        i1 = min(len(W.s) - 1, int(np.searchsorted(W.s, sc + 0.08)) + 1)
+        sl = p["sleeve"]
+        keep = (W.s[i0:i1] > sl) & (W.s[i0 + 1:i1 + 1] < W.length - sl)
+        touching = False
+        if keep.any():
+            A, B = W.pts[i0:i1][keep], W.pts[i0 + 1:i1 + 1][keep]
+            loop = c + w["loop"] @ R.T
+            touching = bool(_seg_dist(loop, A, B).min() < p["radius"] + p["loop_t"] / 2)
+        t = self.d.time - self.t0
+        if touching and not w["touching"] and t - w["last_touch_end"] > 0.05:
+            mt["touches"] += 1
+            mt.setdefault("events", []).append([round(t, 2), "touch", round(w["s"] / W.length, 3)])
+        if w["touching"] and not touching:
+            w["last_touch_end"] = t
+        if touching:
+            mt["touch_time_s"] = round(mt["touch_time_s"] + dt, 3)
+        w["touching"] = touching
+        mt["progress"] = round(min(1.0, w["s"] / max(1e-6, W.length - sl)), 3)
+        done = w["s"] >= W.length - sl
+        mt["steps_done"] = 1 if done else mt["progress"]
+        self.done[w["step"].id] = done
+        return done
+
+    def home(self):
+        """The candidate pressed HOME: the arm glides back to its start pose (the buzz wire: the
+        loop back to the start of the wire). Objects stay where they are. Counted."""
+        if self.phase.kind != "task" or self.finished:
+            return
+        q = self.wire["q"] if self.wire is not None else None
+        self.sim.arms.start_homing(self.side, q)
+        if self.wire is not None:
+            self.sim.arms.teleop[self.side].gripper = 0.78
+        mt = self.metrics.get(self.phase.key)
+        if mt is not None:
+            mt["homes"] = mt.get("homes", 0) + 1
+            t = round(self.d.time - self.t0, 2) if self.t0 is not None else 0.0
+            mt.setdefault("events", []).append([t, "home"])
+
+    # ------------------------------------------------------------ tower (stack)
+    def _next_block(self):
+        """The next block onto the supply zone (if any are left)."""
+        tw = self.stack
+        if not tw["queue"]:
+            return False
+        n = tw["queue"].pop(0)
+        SS.place(self.info, self.d, n, tw["supply"].pos)
+        tw["out"].append(n)
+        if self.metrics.get(self.phase.key) is not None:
+            self.metrics[self.phase.key]["blocks_used"] = len(tw["out"])
+        return True
+
+    def _stack_tick(self, mt):
+        """20 times a second: refill the supply, the tower's height (the best one that stood still
+        for 1 s counts), falls; done when every block is used and all is still."""
+        tw, tol = self.stack, self.cfg.tol
+        plat, sup = tw["plat"], tw["supply"]
+        top = S.TABLE_Z + 2 * plat.p["half"][2]
+        reach = max(plat.p["half"][:2]) + 0.05                    # (a block may overhang the platform)
+        heights, moving = {}, False
+        for n in tw["out"]:
+            p, q, v = self._obj(n)
+            held = self.held.get(n, False)
+            moving |= v > tol["rest_speed"] or held
+            hh = SS._half_height(self.cfg.objects[n], q)
+            near = np.hypot(p[0] - plat.pos[0], p[1] - plat.pos[1]) < reach
+            if near and not held and p[2] - hh > top - 0.006:
+                heights[n] = p[2] + hh - top
+            elif n in tw["on_tower"] and not held and p[2] - hh < S.TABLE_Z + 0.01 and not near:
+                mt["falls"] += 1                                  # (was on the tower, now on the table)
+                mt.setdefault("events", []).append([round(self.d.time - self.t0, 2), "fall", n])
+                tw["on_tower"].discard(n)
+        tw["on_tower"] |= set(heights)
+        mt["height"] = round(max(heights.values(), default=0.0), 3)
+        now = self.d.time
+        if moving:
+            tw["still_since"] = None
+        elif tw["still_since"] is None:
+            tw["still_since"] = now
+        if tw["still_since"] is not None and now - tw["still_since"] >= 1.0:
+            mt["best_height"] = round(max(mt["best_height"], mt["height"]), 3)
+        mt["steps_done"] = round(min(1.0, mt["best_height"] / tw["step"].target_height), 3)
+        # the supply zone empty (the last block taken away): the next one
+        last = tw["out"][-1] if tw["out"] else None
+        if last is not None:
+            p, _, _ = self._obj(last)
+            if np.hypot(p[0] - sup.pos[0], p[1] - sup.pos[1]) > 0.08 and not self.held.get(last, False):
+                self._next_block()
+                self.held.setdefault(tw["out"][-1], False)
+        done = (not tw["queue"] and tw["still_since"] is not None and now - tw["still_since"] >= 2.0
+                and last is not None and np.hypot(*(self._obj(last)[0][:2] - np.asarray(sup.pos))) > 0.08)
+        self.done[tw["step"].id] = bool(done)
+        return done
+
+    # ------------------------------------------------------------ rounds
+    def _new_round(self, mt):
+        """All steps done in a phase with repeat = true: count the round, everything back to its
+        start, the steps start again."""
+        ph = self.phase
+        mt["rounds"] += 1
+        mt["items_done"] = mt["rounds"] * len(ph.steps)
+        mt.setdefault("events", []).append([round(self.d.time - self.t0, 2), "round", mt["rounds"]])
+        for n in ph.objects:
+            SS.place(self.info, self.d, n)
+        mujoco.mj_forward(self.m, self.d)
+        self.done = {st.id: False for st in ph.steps}
+        self.held = {n: False for n in ph.graspable}
+        self.message = f"Round {mt['rounds'] + 1}!"
 
     def _show_target(self):
         steps = self.phase.steps
@@ -176,7 +421,7 @@ class ScreenGame:
         key = self.phase.key
         mt = self.metrics[key]
         mt["completed"] = completed
-        mt["timed_out"] = not completed
+        mt["timed_out"] = not completed or self.phase.repeat
         mt["time_s"] = round(self.d.time - self.t0, 2)
         if self.reaching:
             mt["reach_log"] = self.reach_log
@@ -210,11 +455,18 @@ class ScreenGame:
                 self.paired_since = None
             return
         if self.intro_until is not None:
+            # buzz wire: the arm holds still until the start (the loop stays around the wire)
+            self.sim.arms.frozen = {self.side} if self.wire is not None else set()
             if d.time >= self.intro_until:
                 self._start_phase()
+                self.sim.arms.frozen = set()
             return
         mt = self.metrics[ph.key]
         tel = self.sim.arms.teleop[self.side]
+        mt["tracking_glitches"] = tel.glitches - self._glitch0       # (tracking jumps the arm ignored)
+        if self.wire is not None and self._wire_tick(mt, dt):
+            self._end_phase(True)
+            return
         # motion while engaged, clutch presses, grasp attempts (every tick: cheap)
         if tel.engaged:
             if self._prev_target is not None:
@@ -234,7 +486,7 @@ class ScreenGame:
             self._prev_quat = None
         self._prev_engaged = tel.engaged
         cmd = self.sim.arms.gripper(self.side)
-        if cmd >= 0.5 > self._prev_cmd:
+        if cmd >= 0.5 > self._prev_cmd and self.wire is None:
             mt["grasp_attempts"] += 1
             self._attempt_credited = False           # this attempt can count one grasp
         self._prev_cmd = cmd
@@ -243,11 +495,22 @@ class ScreenGame:
         self._next_check = d.time + 0.05            # the rest at 20 Hz
         elapsed = d.time - self.t0
         mt["time_s"] = round(elapsed, 2)
-        done = self._check_reach(mt) if self.reaching else self._check_steps(mt, cmd)
+        if self.wire is not None:
+            done = False                                # (checked every tick above)
+        elif self.stack is not None:
+            self._track_holding(mt, cmd)
+            done = self._stack_tick(mt)
+        else:
+            done = self._check_reach(mt) if self.reaching else self._check_steps(mt, cmd)
+        if ph.repeat:
+            mt["items_done"] = mt["rounds"] * len(ph.steps) + mt["steps_done"]
+            if done:
+                self._new_round(mt)
+                done = False
         if done:
             self._end_phase(True)
         elif elapsed >= ph.limit:
-            self._end_phase(False)
+            self._end_phase(ph.repeat and mt.get("rounds", 0) > 0)
 
     # ------------------------------------------------------------ state of things
     def ee(self):
@@ -287,6 +550,8 @@ class ScreenGame:
         if o.shape == "box":
             k = int(np.argmax(np.abs(self._axes(n)[2])))
             return S.TABLE_Z + o.half[k] + 0.001
+        if o.shape == "ring":
+            return S.TABLE_Z + SS._half_height(o, self._obj(n)[1]) + 0.001
         return SS.rest_z(n)
 
     def _local(self, p, mk: C.Marker):
@@ -329,6 +594,18 @@ class ScreenGame:
         return (speed < self.cfg.tol["rest_speed"] and abs(p[2] - SS.rest_z(n)) < self.cfg.tol["rest_height"]
                 and not self.held.get(n, False))
 
+    def _on_peg(self, n, peg):
+        """The peg goes through ring n: its centre is along the peg (not past the tip) and close
+        enough to the peg's axis that the peg is inside the hole."""
+        mk, o = self.cfg.markers[peg], self.cfg.objects[n]
+        p, _, _ = self._obj(n)
+        base = np.array([mk.pos[0], mk.pos[1], S.TABLE_Z + max(mk.p["height"], 0.008)])
+        u = np.asarray(mk.p["dir"])
+        v = p - base
+        t = float(v @ u)
+        radial = float(np.linalg.norm(v - t * u))
+        return -0.01 <= t <= mk.p["length"] and radial < o.half[0] - o.half[1] - mk.p["radius"] + 0.006
+
     def _goal_ok(self, n):
         """n is where a place step wants it (a drop there is no drop: it was put down)."""
         for st in self.phase.steps:
@@ -336,7 +613,9 @@ class ScreenGame:
                 continue
             if ((st.type == "place_in_zone" and self._in_zone(n, st.marker))
                     or (st.type == "place_in_slot" and self._slot_ok(n, st.marker))
-                    or (st.type == "place_in_bin" and self._bin_of(n) == st.marker)):
+                    or (st.type == "place_in_bin" and self._bin_of(n) == st.marker)
+                    or (st.type == "hang_on" and self._on_peg(n, st.marker))
+                    or (st.type == "stack" and self.stack is not None and n in self.stack["on_tower"])):
                 return True
         return False
 
@@ -394,6 +673,11 @@ class ScreenGame:
                     mt["wrong_bin"] += 1
                 self.in_bin[n] = b
                 done[st.id] = b == st.marker
+            elif st.type == "hang_on":
+                _, _, v = self._obj(n)
+                done[st.id] = bool(self._on_peg(n, st.marker) and not self.held.get(n) and v < tol["rest_speed"])
+            elif st.type == "follow_wire":
+                continue                                           # (every tick: _wire_tick)
             elif done[st.id] or (st.after is not None and not done[st.after]):
                 continue                                           # (latched, or waiting)
             elif st.type == "remove_from":
@@ -413,8 +697,10 @@ class ScreenGame:
                 done[st.id] = bool(not self.held.get(n) and v < tol["rest_speed"]
                                    and self._axis_z(n)[2] > tol["upright_cos"]
                                    and p[2] < SS.rest_z(n) + tol["rest_height"])
+        for k in done:
+            done[k] = bool(done[k])                       # (numpy booleans: not JSON)
         mt["done_steps"] = [st.label for st in self.phase.steps if done[st.id]]
-        mt["steps_done"] = sum(done.values())
+        mt["steps_done"] = int(sum(done.values()))
         return all(done.values())
 
     # ------------------------------------------------------------ results
@@ -450,7 +736,16 @@ class ScreenGame:
                     time=round(d.time - self.t0, 1) if self.t0 is not None else 0.0,
                     steps_done=mt.get("steps_done", 0), steps_total=mt.get("steps_total", 0),
                     steps=[dict(label=st.label, done=bool(self.done.get(st.id))) for st in p.steps],
-                    phone=self.phone_connected(), finished=self.finished, message=self.message)
+                    phone=self.phone_connected(), finished=self.finished, message=self.message,
+                    homing=self.sim.arms.homing(self.side),
+                    round=(mt.get("rounds", 0) + 1) if p.repeat and p.kind == "task" else None,
+                    tower=(dict(height=mt.get("height", 0.0), best=mt.get("best_height", 0.0),
+                                target=mt.get("target_height"), falls=mt.get("falls", 0),
+                                left=len(self.stack["queue"]))
+                           if self.stack is not None and p.kind == "task" else None),
+                    wire=(dict(progress=mt.get("progress", 0.0), touches=mt.get("touches", 0),
+                               touching=self.wire["touching"], off=self.wire["off"])
+                          if self.wire is not None and p.kind == "task" else None))
 
 
 server.register_game(SS.TASK, ScreenGame)

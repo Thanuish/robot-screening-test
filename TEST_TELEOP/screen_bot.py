@@ -1,7 +1,7 @@
 """A bot plays the screening test through the same messages a phone sends, in simulation time:
 every phase of config/screening.toml, step by step (reach, pick and place into zones,
 outlines and bins, take a book out of its holder and lay it flat, pour from a cup and set it
-upright). Checks that every task can be done and prints the metrics and scores. Pictures: --pics DIR.
+upright, hang rings on pegs, guide the buzz-wire loop along its wire). Checks that every task can be done and prints the metrics and scores. Pictures: --pics DIR.
 
     python -m TEST_TELEOP.screen_bot
     python -m TEST_TELEOP.screen_bot --skip shapes      # leave a task undone (tests partial scores)
@@ -27,6 +27,7 @@ from vrteleop import scene as S  # noqa: E402
 from vrteleop.server import TeleopSim, build_parser  # noqa: E402
 
 HAND0 = np.array([0.0, -0.25, 1.1])        # where the "phone" is when the bot starts
+ROUNDS = 2                                  # rounds the bot plays in a phase with repeat = true
 
 
 def _rz(a):
@@ -108,6 +109,113 @@ def do_pour(bot, cup, container, pour_angle=np.radians(130)):
     bot.advance(1.0)
     ph = g.phase
     print(f"  steps: {g.metrics[ph.key].get('done_steps') if ph.kind == 'task' else 'phase finished'}")
+
+
+def _turn(a, b):
+    """The rotation (matrix) that turns unit vector a onto b along the shortest way."""
+    a, b = np.asarray(a, float) / np.linalg.norm(a), np.asarray(b, float) / np.linalg.norm(b)
+    k = np.cross(a, b)
+    s_, c = np.linalg.norm(k), float(a @ b)
+    if s_ < 1e-9:
+        return np.eye(3)
+    k /= s_
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + s_ * K + (1 - c) * K @ K
+
+
+def do_ring(bot, n, peg):
+    """Ring n stands on its edge (its axis along world x): take it by the top of its tube, the
+    fingers across the tube; turn it so its hole lines up with the peg; bring it to just past the
+    peg's tip and push it onto the peg; let go; pull the fingers back out along the gripper."""
+    Z = S.TABLE_Z
+    g, cfg = bot.game, SS.CFG
+    o, mk = cfg.objects[n], cfg.markers[peg]
+    c, _ = bot.obj(n)
+    top = c + np.array([0, 0, o.half[0]])
+    Rg = _rz(np.pi / 2)                                  # fingers closing along world x
+    bot.move_pose((top[0], top[1], Z + 0.30), Rg, 1.5)
+    bot.move_pose((top[0], top[1], top[2] - 0.002), Rg, 1.2)
+    bot.gripper(True)
+    bot.move_pose((top[0], top[1], Z + 0.32), Rg, 1.2)
+    c, _ = bot.obj(n)
+    off0 = c - bot.ee_target()                           # ring centre from the pinch point
+    print(f"  {n} lifted: held {g.held[n]}")
+    u = np.asarray(mk.p["dir"])
+    b = u if u[0] >= 0 else -u                           # (either way through: the shorter turn)
+    Q = _turn([1, 0, 0], b)
+    R1 = Q @ Rg
+    off = Q @ off0
+    base = np.array([mk.pos[0], mk.pos[1], Z + max(mk.p["height"], 0.008)])
+    tip = base + mk.p["length"] * u
+    approach = Q @ np.array([0, 0, -1.0])                # where the fingers point
+    if u[2] > 0.9:                                       # straight up: lower the ring over it
+        c_a, c_in = tip + np.array([0, 0, 0.05]), tip - np.array([0, 0, 0.045])
+    else:                                                # tilted: from past the tip, along the peg
+        c_a, c_in = tip + 0.05 * u, base + 0.45 * mk.p["length"] * u
+    bot.move_pose(c_a - off + np.array([0, 0, 0.10]), R1, 2.0)     # turned, above the way in
+    bot.move_pose(c_a - off, R1, 1.2)
+    bot.move_pose(c_in - off, R1, 1.5)
+    ph = g.phase
+    bot.gripper(False, 0.7)
+    for goal, R in ((c_in - off - 0.07 * approach, R1),                # fingers out
+                    (c_in - off - 0.07 * approach + np.array([0, 0, 0.10]), Rg)):
+        if g.phase is not ph:                            # (that was the last ring: the task is over)
+            break
+        bot.move_pose(goal, R, 1.0)
+    bot.grip = 0.0                                       # (MOVE let go)
+    bot.advance(1.5)
+    print(f"  {n}: on its peg {g._on_peg(n, peg)}" + ("" if g.phase.kind != "task" else f"  ({g.metrics[g.phase.key]['steps_done']}/{len(g.phase.steps)})"))
+
+
+def do_stack(bot, st, upto=None):
+    """Tower: take each block from the supply as it appears and set it on the one below."""
+    Z = S.TABLE_Z
+    g, cfg = bot.game, SS.CFG
+    ph, tw = g.phase, g.stack
+    plat = tw["plat"]
+    top = Z + 2 * plat.p["half"][2]
+    for i in range(len(st.objects) if upto is None else upto):
+        for _ in range(40):                                 # (wait for the next block)
+            if len(tw["out"]) > i or g.phase is not ph:
+                break
+            bot.advance(0.25)
+        if g.phase is not ph or len(tw["out"]) <= i:
+            break
+        n = tw["out"][i]
+        h = cfg.objects[n].half[2]
+        z = top + 2 * h * i + h + 0.004                      # (its centre, on the one below)
+        bot.pick_place(n, plat.pos, place_z=z, lift=z - Z + 0.09)
+        print(f"  {n}: tower {g.metrics[ph.key]['height'] * 100:.0f} cm (best {g.metrics[ph.key]['best_height'] * 100:.0f} cm)")
+    bot.grip = 0.0
+    bot.advance(3.0)
+
+
+def do_wire(bot, speed=0.05):
+    """Guide the loop along the wire at `speed` [m/s], square to the wire, clutch held."""
+    from TEST_TELEOP.screen_game import wand_frame, _mat_of
+    g = bot.game
+    w = g.wire
+    W, rot = w["W"], g.phase.rotation
+    tel = bot.sim.arms.teleop[bot.side]
+    bot.grip = 1.0
+    bot.advance(0.05)
+    start, hand0 = bot.ee_target(), bot.hand.copy()
+    Rs0 = _mat_of(tel.target_quat)
+    Rw0 = Rs0 @ w["R_rel"]
+    c0 = start + Rs0 @ w["p_rel"]
+    s0, s_end = w["s"], W.length - w["mk"].p["sleeve"] / 2
+    n = int((s_end - s0) / (speed * 0.02))
+    for k in range(n + 1):
+        c, t = W.at(s0 + (s_end - s0) * k / max(1, n))
+        R1 = wand_frame(t, rot) @ Rw0.T                 # the hand's turn since the start
+        Rs = R1 @ Rs0
+        pinch = c - Rs @ w["p_rel"]
+        bot.rot = R1
+        bot.hand = hand0 + (pinch - start) / bot.scale
+        bot.advance(0.02)
+        if g.wire is None:
+            break
+    bot.advance(0.5)
 
 
 class Bot:
@@ -280,6 +388,16 @@ def play_phase(bot, ph):
             if cup is None:
                 raise SystemExit(f"the bot can only pour '{st.objects[0]}' from a cup they start in")
             do_pour(bot, cup, st.marker)
+        elif st.type == "hang_on":
+            do_ring(bot, st.object, st.marker)
+        elif st.type == "stack":
+            do_stack(bot, st)
+        elif st.type == "follow_wire":
+            key = ph.key
+            do_wire(bot)
+            mt = g.metrics[key]
+            print(f"  wire: progress {mt['progress']}, touches {mt['touches']}, touching {mt['touch_time_s']} s, "
+                  f"completed {mt['completed']}")
         elif st.type in ("lay_flat", "set_upright") and ("remove_from" in types or "pour_into" in types):
             pass                                   # (done with the step above)
         else:
@@ -304,8 +422,14 @@ def main():
         print(f"{ph.title} ({ph.key})")
         if ph.key not in a.skip:
             play_phase(bot, ph)
+            for _ in range(ROUNDS - 1):                     # (repeat: a few more rounds)
+                if not ph.repeat or g.phase is not ph:
+                    break
+                bot.advance(1.0)
+                print(f"  -- round {g.metrics[ph.key]['rounds'] + 1}")
+                play_phase(bot, ph)
         bot.pic(f"{ph.key}_end")
-        bot.grip, bot.rot = 0.0, None
+        bot.grip, bot.rot, bot.yaw = 0.0, None, 0.0      # (MOVE let go: the next task starts afresh)
     bot.wait_phase(g.phases[-1].key, timeout=max(p.limit or 0 for p in g.phases) + 60)
     print(f"\nresults ({g.results_path}):")
     res = json.loads(g.results_path.read_text())

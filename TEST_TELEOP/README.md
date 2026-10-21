@@ -23,7 +23,9 @@ install. Up to about 15 people at a time, run from your laptop.
 | Practice 2 | put a yellow cube into a green square | 2:30 | no |
 | Task 1: shapes | put a big square, a small square and a bar into their outlines (the bar must be turned 90°) | 4:00 | yes |
 | Task 2: sorting | red ball, blue cube, green cylinder into the bin of their colour | 3:00 | yes |
-| Task 3: tilt and pour | take a book out of its holder and lay it flat on a mat (tilt 90°); pour 5 balls from a cup into a bowl (tip the cup) and set the cup down upright | 5:00 | yes |
+| Task 3: tilt and pour | take a book out of its holder and lay it flat on a mat (tilt 90°); pour 4 balls from a clear cup into a bowl (tip the cup) and set the cup down upright | 7:00 | yes |
+| Ring on pegs | three rings stand in holders; hang each on the peg straight ahead of it, of its colour. The pegs lean at different angles (almost level, 60°, 45°), so each ring needs a different tilt. **In rounds:** when all three are on, they come back for the next round, until the time is up | 5:00 | yes |
+| Tower | blocks appear one at a time on a yellow square; stack them on a wooden platform as high as possible (6 blocks, 5 cm each) | 4:00 | yes |
 
 Practice and tasks 1–2 use the phone's position and its turn left / right; the gripper keeps
 pointing down. **Task 3 uses all six degrees of freedom**: tilting and twisting the phone also
@@ -50,7 +52,11 @@ fingertips are low enough to grab (`[depth_cues]` in the configuration).
 
 **Phone controls:** hold **MOVE** and move the phone: the gripper moves the same way. Turning
 the phone turns the gripper. **GRAB** / **RELEASE** close and open it. **RE-CENTER** resets
-"forward" to wherever the phone points.
+"forward" to wherever the phone points. **HOME** glides the arm back to its start pose in 1 to 3 s
+(things on the table stay where they are; in the buzz wire: the loop back to the start of the
+wire). Use it when the arm is stuck in an awkward pose: after a lot of twisting, the wrist can be
+wound up close to its limits (+/-360 deg) and hardly turn any further. Each HOME is counted
+(`homes` and an event in results.json).
 
 **View** (on the computer): the arrow keys turn and tilt the camera, **+** / **−** (or the mouse
 wheel) zoom, dragging with the mouse also turns it, and **R** resets it. "Forward" on the phone
@@ -177,8 +183,24 @@ every setting:
 | `[[phases]]` | the phases in order: text, time limit, scored or practice, rotation, objects, markers, and the **steps** to do |
 
 Steps are building blocks: `reach` a target, `place_in_zone`, `place_in_slot` (turned to match),
-`place_in_bin`, `remove_from` a holder, `lay_flat`, `pour_into` a bowl, `set_upright`. A new task
-is a new `[[phases]]` entry made of these, with its objects and markers; no programming.
+`place_in_bin`, `remove_from` a holder, `lay_flat`, `pour_into` a bowl, `set_upright`, `hang_on` (a
+ring on a peg), `follow_wire` (buzz wire). A new task is a new `[[phases]]` entry made of these, with
+its objects and markers; no programming. Objects: boxes, balls, cylinders, cups (`material = "glass"`
+makes one see-through), rings. Markers: zones, outlines, bins, a bowl, holders, pegs (any angle),
+wires (a curve through points).
+
+**Rounds** (`repeat = true` on a phase, with `target_rounds`): when all its steps are done, the
+round is counted, the phase's objects go back to their starts and the steps begin again, until
+the time is up. Score: 80 x (things done over all rounds / (target_rounds x steps)) + 20 x grasp
+efficiency.
+
+**Tower** (`stack` step): the blocks of a group appear one at a time on a supply zone (the next
+when the last one has been taken away); the height of the blocks resting on the platform (or on
+each other) counts once everything has stood still for a second; a block that was on the tower
+and ends up on the table is a fall. The task ends when every block is used and all is still, or
+when time is up. Score: 60 x best height / target_height + 20 x (1 - falls / 3) + 20 x grasp
+efficiency. (The buzz wire, `follow_wire` with a `wire` marker, is still available but not in the
+test.)
 
 After editing, check the file: `python -m TEST_TELEOP.check_config`. It lists every problem
 (a misspelt setting, a size below zero, an object off the table or out of the arm's reach, a

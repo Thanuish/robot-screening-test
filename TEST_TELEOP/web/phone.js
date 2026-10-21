@@ -10,7 +10,7 @@ const $ = (id) => document.getElementById(id);
 const BASE = window.TELEOP_BASE;
 
 // ------------------------------------------------------------ network
-let ws = null, wsOpen = false, status = {};
+let ws = null, wsOpen = false, status = {}, wasTouching = false;
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${BASE}/ws`);
   ws.binaryType = 'arraybuffer';
@@ -22,6 +22,11 @@ function connect() {
     if (msg.type === 'pong') { rtt = performance.now() - msg.t; return; }
     status = msg;
     showStatus();
+    // buzz wire: one short buzz when the loop touches the wire (short: shaking the phone
+    // disturbs its motion tracking)
+    const touching = !!msg.task_game?.wire?.touching;
+    if (touching && !wasTouching && navigator.vibrate) navigator.vibrate(30);
+    wasTouching = touching;
   };
 }
 connect();
@@ -33,11 +38,12 @@ setInterval(() => { if (wsOpen) ws.send(JSON.stringify({ type: 'ping', t: perfor
 function showStatus() {
   const g = status.task_game;
   if (!g) return;
-  let t = g.title;
+  let t = g.round ? `${g.title} (round ${g.round})` : g.title;
   if (g.limit && g.intro === 0) t += `  ·  ${Math.max(0, Math.ceil(g.limit - g.time))} s left`;
   if (g.intro > 0) t += `  ·  starts in ${Math.ceil(g.intro)}`;
   if (g.finished) t = 'Finished, thank you! You can close this page.';
   if (g.rotation === 'full' && !g.finished) t += '  ·  TILT ON: tilting and twisting the phone tilts the gripper';
+  if (g.homing) t = 'Going home…  ' + t;
   $('phase').textContent = t;
 }
 
@@ -59,7 +65,7 @@ function refreshMove() {
   if (navigator.vibrate) navigator.vibrate(on ? 18 : 8);
 }
 function setMove(on) { touchHold = on; refreshMove(); }
-const onButton = (el) => !!(el && el.closest && el.closest('#grab, #recenter'));
+const onButton = (el) => !!(el && el.closest && el.closest('#grab, #recenter, #home'));
 $('overlay').addEventListener('touchstart', (e) => {
   if (onButton(e.target)) return;
   e.preventDefault();
@@ -70,17 +76,38 @@ document.addEventListener('touchcancel', (e) => { if (e.touches.length === 0) se
 document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 // taps on the two buttons must not also count as AR "select" (= MOVE)
-for (const b of [grab, $('recenter')]) b.addEventListener('beforexrselect', (e) => e.preventDefault());
+for (const b of [grab, $('recenter'), $('home')]) b.addEventListener('beforexrselect', (e) => e.preventDefault());
 // mouse (testing on a computer)
 $('overlay').addEventListener('mousedown', (e) => { if (!onButton(e.target)) setMove(true); });
 document.addEventListener('mouseup', () => setMove(false));
-grab.addEventListener('click', () => {
+// A tap on a button: on the touch itself (inside some AR runtimes, e.g. an iPhone App Clip, a tap
+// in the AR session never becomes a "click"), and on click as well; one tap counts once.
+function onTap(el, fn) {
+  let last = 0;
+  const run = (e) => {
+    const now = performance.now();
+    if (now - last < 400) return;
+    last = now;
+    if (e && e.cancelable) e.preventDefault();
+    fn();
+  };
+  el.addEventListener('touchend', run, { passive: false });
+  el.addEventListener('pointerup', run);
+  el.addEventListener('click', run);
+}
+onTap(grab, () => {
   closed = !closed;
   grab.classList.toggle('closed', closed);
   grab.textContent = closed ? 'RELEASE' : 'GRAB';
   if (navigator.vibrate) navigator.vibrate(25);
 });
-$('recenter').addEventListener('click', () => { recenterReq = true; if (navigator.vibrate) navigator.vibrate(12); });
+onTap($('recenter'), () => { recenterReq = true; if (navigator.vibrate) navigator.vibrate(12); });
+// HOME: the arm glides back to its start pose (out of an awkward, stuck pose); MOVE is ignored
+// until it's there
+onTap($('home'), () => {
+  if (wsOpen) ws.send(JSON.stringify({ type: 'home' }));
+  if (navigator.vibrate) navigator.vibrate(20);
+});
 
 // ------------------------------------------------------------ pose math
 // WebXR: Y up, -Z = where the phone's back camera looked when tracking started.

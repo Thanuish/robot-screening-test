@@ -274,7 +274,7 @@ async function loadScene() {
   }
   cloths = (js.flexes || []).map(fx => makeCloth(fx, mats));
   // handle for page scripts (e.g. the screening monitor's depth cues) and the browser console
-  window.__teleop = { scene, cloths, camera, orbit, mjRoot, THREE,
+  window.__teleop = { scene, cloths, camera, orbit, mjRoot, THREE, renderer, afterRender,
                       body: (name) => bodyObjs.find(o => o.name === name) };
   window.dispatchEvent(new Event('teleop-scene'));
   document.getElementById('loading').style.display = 'none';
@@ -725,12 +725,15 @@ function smoothBodies() {
     o.quaternion.slerpQuaternions(_qa, _qb, a);
   }
 }
+// page scripts can draw more after each frame (e.g. the screening monitor's side view)
+const afterRender = [];
 renderer.setAnimationLoop(() => {
   handleXRInput();
   smoothBodies();
   for (const c of cloths) updateCloth(c);
   if (!renderer.xr.isPresenting) updateMirrorCamera();
   renderer.render(scene, camera);
+  if (!renderer.xr.isPresenting) for (const f of afterRender) f(renderer, scene);
 });
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;

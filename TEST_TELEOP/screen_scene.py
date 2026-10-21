@@ -46,10 +46,14 @@ def _quat(yaw: float, pitch: float = 0.0):
 
 def _half_height(o: C.Obj, quat) -> float:
     """Half the object's height when it rests in orientation quat (boxes; others: upright)."""
+    R = np.zeros(9)
+    mujoco.mju_quat2Mat(R, np.asarray(quat, float))
+    R = R.reshape(3, 3)
     if o.shape == "box":
-        R = np.zeros(9)
-        mujoco.mju_quat2Mat(R, np.asarray(quat, float))
-        return float(np.abs(R.reshape(3, 3)[2]) @ np.asarray(o.half))
+        return float(np.abs(R[2]) @ np.asarray(o.half))
+    if o.shape == "ring":                     # lying flat: half its thickness; on its edge: its outer radius
+        az = abs(R[2, 2])
+        return float(az * o.half[1] + np.sqrt(max(0.0, 1 - az * az)) * o.half[0] + (1 - az) * o.half[1])
     return o.half[0] if o.shape == "sphere" else o.half[1]
 
 
@@ -74,7 +78,8 @@ def _start_in_cup(o: C.Obj):
     r = o.half[0]
     i = o.index_in_group
     if i < 4:
-        ring = min(0.013, cup.half[0] - cup.cup_wall - r - 0.001)
+        # four in a square on the bottom, apart by at least their diameter + 2 mm, clear of the wall
+        ring = min(max(0.013, (2 * r + 0.002) / np.sqrt(2)), cup.half[0] - cup.cup_wall - r - 0.001)
         a = np.pi / 4 + i * np.pi / 2
         return (cx + ring * np.cos(a), cy + ring * np.sin(a), TABLE_Z + cup.cup_bottom + r + 0.002)
     k = i - 4
@@ -88,6 +93,97 @@ def _outline(body, name, cx, cy, hx, hy, rgba, w):
     for k, (px, py, sx, sy) in enumerate([(cx + hx, cy, w, hy + w), (cx - hx, cy, w, hy + w),
                                           (cx, cy + hy, hx + w, w), (cx, cy - hy, hx + w, w)]):
         S._add_box(body, f"{name}_{k}", [px, py, 0.0008], [sx, sy, 0.0008], rgba, collide=False)
+
+
+def _capsule(body, name, a, b, r, rgba=None, material=None, collide=False, group=0):
+    """A capsule from point a to point b (body frame)."""
+    g = body.add_geom()
+    g.name = name
+    g.type = mujoco.mjtGeom.mjGEOM_CAPSULE
+    g.fromto = [*a, *b]
+    g.size = [r, 0, 0]
+    if material:
+        g.material = material
+    elif rgba is not None:
+        g.rgba = rgba
+    if not collide:
+        g.contype = g.conaffinity = 0
+    g.group = group
+    return g
+
+
+def _ring_points(R, n, plane="xy"):
+    a = 2 * np.pi * np.arange(n + 1) / n
+    c, s = R * np.cos(a), R * np.sin(a)
+    z = np.zeros_like(a)
+    return np.stack([c, s, z] if plane == "xy" else [c, z, s], 1)      # "xz": a loop standing up
+
+
+def _add_ring_object(b, name, o: C.Obj):
+    """A ring lying flat (its axis = the body's z): short overlapping capsules around a circle."""
+    P = _ring_points(o.half[0], o.ring_segments)
+    for k in range(o.ring_segments):
+        g = _capsule(b, f"{name}_seg{k}", P[k], P[k + 1], o.half[1], rgba=o.rgba,
+                     material=_mat(o.material), collide=True)
+        g.mass = o.mass / o.ring_segments
+        g.condim, g.friction = o.condim, list(o.friction)
+
+
+def _add_peg(body, n, mk: C.Marker):
+    """A post on a small base, the peg leaving its top tilted toward the marker's +x."""
+    p, rgba = mk.p, mk.rgba or [0.9, 0.9, 0.9, 1]
+    h, t, L, r = p["height"], p["tilt"], p["length"], p["radius"]
+    post = [0.55, 0.55, 0.58, 1]
+    S._add_box(body, f"{n}_base", [0, 0, 0.004], [0.035, 0.035, 0.004], post)
+    if h > 0:
+        g = body.add_geom()
+        g.name = f"{n}_post"
+        g.type = mujoco.mjtGeom.mjGEOM_CYLINDER
+        g.size = [max(r * 1.6, 0.012), h / 2, 0]
+        g.pos = [0, 0, h / 2]
+        g.rgba = post
+    base = np.array([0.0, 0.0, max(h, 0.008)])
+    tip = base + L * np.array([np.sin(t), 0.0, np.cos(t)])
+    g = _capsule(body, f"{n}_peg", base, tip, r, rgba=rgba, collide=True)
+    g.condim, g.friction = 3, [0.6, 0.005, 0.0001]
+
+
+def wire_points(mk: C.Marker):
+    """The wire's control points in the world."""
+    return [[mk.pos[0] + x, mk.pos[1] + y, TABLE_Z + z] for x, y, z in mk.p["points"]]
+
+
+def wand_body(name: str) -> str:
+    return f"wand_{name}"
+
+
+def _add_wire(wb, body, n, mk: C.Marker):
+    """The wire (a chain of thin capsules, for the eye: touches are measured, not simulated),
+    red rubber sleeves at both ends, posts down to a wooden base; and the wand that goes with it
+    (a mocap body the game keeps in the gripper)."""
+    from buzzwire.spline import Wire
+    p = mk.p
+    W = Wire([[x, y, z] for x, y, z in p["points"]], step=0.01)        # (marker frame)
+    metal, rubber, post = [0.78, 0.8, 0.84, 1], [0.85, 0.12, 0.1, 1], [0.5, 0.5, 0.53, 1]
+    for k in range(len(W.pts) - 1):
+        a, b = W.pts[k], W.pts[k + 1]
+        sl = p["sleeve"]
+        on_sleeve = W.s[k] < sl or W.s[k + 1] > W.length - sl
+        _capsule(body, f"{n}_w{k}", a, b, p["radius"] * (1.8 if on_sleeve else 1.0), rgba=rubber if on_sleeve else metal)
+    for k, q in enumerate((W.pts[0], W.pts[-1])):
+        _capsule(body, f"{n}_post{k}", [q[0], q[1], 0.0], [q[0], q[1], q[2]], 0.006, rgba=post)
+        S._add_box(body, f"{n}_foot{k}", [q[0], q[1], 0.005], [0.03, 0.03, 0.005], [0.62, 0.45, 0.3, 1])
+    # the wand: loop centre at its origin, the loop standing in its x-z plane (the wire runs along
+    # its y), the handle back along -x to where the gripper holds it
+    wand = wb.add_body()
+    wand.name = wand_body(n)
+    wand.mocap = True
+    wand.pos = list(PARK)
+    L = _ring_points(p["loop_r"], 28, "xz")
+    for k in range(28):
+        _capsule(wand, f"{n}_loop{k}", L[k], L[k + 1], p["loop_t"] / 2, rgba=[0.86, 0.68, 0.25, 1])
+    _capsule(wand, f"{n}_stem", [-p["loop_r"], 0, 0], [-p["handle"] + 0.03, 0, 0], 0.003, rgba=[0.86, 0.68, 0.25, 1])
+    _capsule(wand, f"{n}_grip", [-p["handle"] + 0.03, 0, 0], [-p["handle"] - 0.03, 0, 0], 0.009, rgba=[0.12, 0.12, 0.14, 1])
 
 
 def _hide_other_arm(spec: mujoco.MjSpec):
@@ -117,9 +213,35 @@ def _stiffer_servos(spec: mujoco.MjSpec, k: float):
                 a.forcerange = fr * k
 
 
-def _add_ring(b, name, centre, r_in, bottom, height, wall, segments, material, masses=None, friction=None):
+def _tube_mesh(spec, name, r_in, r_out, z0, z1, n=48):
+    """A smooth open tube (a cup's wall, for the eye): outer and inner wall, top rim, closed at the
+    bottom. Returns the mesh name."""
+    a = 2 * np.pi * np.arange(n) / n
+    c, s = np.cos(a), np.sin(a)
+    rings = [(r_out, 0.0), (r_out, z1), (r_in, z1), (r_in, z0)]     # outer bottom/top, inner top/bottom
+    vert = np.concatenate([np.stack([r * c, r * s, np.full(n, z)], 1) for r, z in rings])
+    faces = []
+    for k in range(n):
+        k1 = (k + 1) % n
+        ob0, ot0, it0, ib0 = k, n + k, 2 * n + k, 3 * n + k
+        ob1, ot1, it1, ib1 = k1, n + k1, 2 * n + k1, 3 * n + k1
+        faces += [(ob0, ob1, ot1), (ob0, ot1, ot0),                   # outer wall, facing out
+                  (ot0, ot1, it1), (ot0, it1, it0),                   # top rim, facing up
+                  (ib0, it1, ib1), (ib0, it0, it1),                   # inner wall, facing in
+                  (ob0, ib1, ob1), (ob0, ib0, ib1)]                   # closed at the bottom
+    mesh = spec.add_mesh()
+    mesh.name = f"{name}_glass_mesh"
+    mesh.uservert = vert.flatten().tolist()
+    mesh.userface = np.array(faces).flatten().tolist()
+    return mesh.name
+
+
+def _add_ring(b, name, centre, r_in, bottom, height, wall, segments, material, masses=None, friction=None,
+              spec=None, see_through=False):
     """A hollow round vessel: a round bottom and a ring of overlapping wall slabs (no gaps for
-    the balls). centre (x, y) in the body frame; the bottom's underside at z = 0."""
+    the balls). centre (x, y) in the body frame; the bottom's underside at z = 0.
+    see_through (a clear material): the slabs only collide (invisible, their overlaps would show
+    through) and one smooth tube is drawn instead (needs spec)."""
     cx, cy = centre
     friction = friction or [1.0, 0.02, 0.001]
     r_mid = r_in + wall / 2
@@ -141,10 +263,22 @@ def _add_ring(b, name, centre, r_in, bottom, height, wall, segments, material, m
         g.size = [wall / 2, seg, height / 2]
         g.pos = [cx + r_mid * np.cos(a), cy + r_mid * np.sin(a), bottom + height / 2]
         g.quat = [np.cos(a / 2), 0, 0, np.sin(a / 2)]
-        g.material = material
+        if see_through:
+            g.rgba = [1, 1, 1, 0]
+        else:
+            g.material = material
         g.condim, g.friction = 6, list(friction)
         if masses:
             g.mass = masses[1]
+    if see_through:
+        g = b.add_geom()
+        g.name = f"{name}_glass"
+        g.type = mujoco.mjtGeom.mjGEOM_MESH
+        g.meshname = _tube_mesh(spec, name, r_in, r_in + wall, bottom, bottom + height)
+        g.pos = [cx, cy, 0]
+        g.material = material
+        g.contype = g.conaffinity = 0
+        g.mass = 0.0
 
 
 def _mat(name):
@@ -177,6 +311,14 @@ def _add_marker(wb, mk: C.Marker):
         for k, (sx, sy) in enumerate([(1, 1), (1, -1), (-1, 1), (-1, -1)]):
             S._add_box(body, f"{n}_post{k}", [sx * dx / 2, sy * dy / 2, ph[2]], ph, material=_mat(mk.material))
         S._add_box(body, f"{n}_base", [0, 0, bh[2]], bh, material=_mat(mk.material), collide=False)
+    elif mk.kind == "peg":
+        _add_peg(body, n, mk)
+    elif mk.kind == "wire":
+        _add_wire(wb, body, n, mk)
+    elif mk.kind == "platform":                     # a fixed block to build on
+        h = mk.p["half"]
+        g = S._add_box(body, f"{n}_top", [0, 0, h[2]], h, rgba or [0.75, 0.6, 0.45, 1], material=_mat(mk.material))
+        g.friction = [1.0, 0.01, 0.001]
 
 
 def add(spec: mujoco.MjSpec):
@@ -211,7 +353,11 @@ def add(spec: mujoco.MjSpec):
         if o.shape == "cup":
             _add_ring(b, name, (0, 0), o.half[0] - o.cup_wall, o.cup_bottom, 2 * o.half[1], o.cup_wall,
                       o.cup_segments, _mat(o.material),
-                      masses=(o.mass * 2 / 7, o.mass * 5 / 7 / o.cup_segments), friction=o.friction)
+                      masses=(o.mass * 2 / 7, o.mass * 5 / 7 / o.cup_segments), friction=o.friction,
+                      spec=spec, see_through=bool(o.material) and CFG.materials[o.material].rgba[3] < 1)
+            continue
+        if o.shape == "ring":
+            _add_ring_object(b, name, o)
             continue
         gm = b.add_geom()
         gm.name = f"{name}_geom"
@@ -264,6 +410,13 @@ def show_marker(info: S.SceneInfo, data: mujoco.MjData, name: str, on: bool = Tr
     data.mocap_quat[mid] = _quat(mk.yaw if on else 0.0)
 
 
+def move_wand(info: S.SceneInfo, data: mujoco.MjData, wire: str, pos=None, quat=None):
+    """The wand of a wire marker at pos / quat (world), or parked (pos None)."""
+    mid = info.model.body_mocapid[info.model.body(wand_body(wire)).id]
+    data.mocap_pos[mid] = list(PARK) if pos is None else pos
+    data.mocap_quat[mid] = [1, 0, 0, 0] if quat is None else quat
+
+
 def show_goal(info: S.SceneInfo, data: mujoco.MjData, pos=None):
     """The reach target at pos (world), or parked (None)."""
     data.mocap_pos[info.model.body_mocapid[info.model.body(GOAL).id]] = list(PARK) if pos is None else pos
@@ -273,8 +426,10 @@ def park_all(info: S.SceneInfo, data: mujoco.MjData):
     """Everything out of sight (the game then places what the current phase needs)."""
     for name in CFG.objects:
         place(info, data, name, "park")
-    for name in CFG.markers:
+    for name, mk in CFG.markers.items():
         show_marker(info, data, name, False)
+        if mk.kind == "wire":
+            move_wand(info, data, name, None)
     show_goal(info, data, None)
 
 

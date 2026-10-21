@@ -30,7 +30,8 @@
     .btn { flex: 1; border: 0; border-radius: 16px; color: #fff; font-weight: 800; font-size: 20px;
       padding: 22px 6px; background: rgba(60,64,74,.92); }
     #grab { background: rgba(40,140,80,.95); } #grab.closed { background: rgba(200,90,40,.95); }
-    #recenter { flex: 0 0 auto; font-size: 13px; padding: 10px 14px; border-radius: 10px; }
+    #recenter, #home { flex: 0 0 auto; font-size: 13px; padding: 10px 14px; border-radius: 10px; }
+    #home { background: rgba(120,90,200,.92); }
     #move { margin: 0 10px 16px; height: 34vh; border-radius: 22px; border: 3px solid #5a8dee;
       background: rgba(47,111,222,.35); color: #fff; font-size: 30px; font-weight: 900;
       display: flex; align-items: center; justify-content: center; text-align: center; }
@@ -47,7 +48,8 @@
         how motion tracking works). You won't see the camera image, and no images are sent anywhere.</li>
     </ol>
     <p><b>Controls:</b> hold <b>MOVE</b> and move the phone; the gripper follows. Turn the phone to turn
-    the gripper. <b>GRAB</b> / <b>RELEASE</b> close and open it.</p>
+    the gripper. <b>GRAB</b> / <b>RELEASE</b> close and open it. <b>HOME</b> brings the arm back
+    to its start pose if it gets stuck in an awkward position (things on the table stay where they are).</p>
     <p id="err"></p>
     <button id="start">START CONTROLLER</button>
   </div>
@@ -63,6 +65,7 @@
     <div id="row">
       <button class="btn" id="grab">GRAB</button>
       <button class="btn" id="recenter">RE-CENTER</button>
+      <button class="btn" id="home">HOME</button>
     </div>
     <div id="move">HOLD ANYWHERE TO MOVE</div>
   </div>

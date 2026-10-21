@@ -13,3 +13,6 @@ tomlkit>=0.12
 # Robot Buzz Wire: kinematics and inverse kinematics (UR5e from the same MJCF as the physics)
 pin>=3.4
 proxsuite>=0.6
+# the QP inverse kinematics of the screening test (vrteleop/ik.py QPIK: exact joint limits, table keep-out)
+qpsolvers>=4.3
+daqp>=0.5

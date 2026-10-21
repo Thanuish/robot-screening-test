@@ -46,6 +46,16 @@ def register_game(task: str, cls):
     TASK_GAMES[task] = cls
 
 
+def _plain(o):
+    """numpy numbers in a status (a game's metrics) -> plain Python: one odd value must never stop
+    the simulator (json.dumps raises on them)."""
+    if isinstance(o, np.generic):
+        return o.item()
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    return str(o)
+
+
 class TeleopSim:
     def __init__(self, args):
         self.args = args
@@ -324,7 +334,7 @@ class TeleopSim:
                 + head_arr.tobytes() + cloth.tobytes())
 
     def status(self, rtf: float) -> str:
-        return json.dumps(self.status_dict(rtf))
+        return json.dumps(self.status_dict(rtf), default=_plain)
 
     def status_dict(self, rtf: float | None = None) -> dict:
         cc = self.info.cloth_config
@@ -511,6 +521,12 @@ def make_app(sim: TeleopSim) -> web.Application:
                         sim.view_yaw = float(data.get("yaw", 0.0))
                     except (TypeError, ValueError):
                         pass
+                elif t == "home":             # the arm back to its start pose (a stuck, awkward pose)
+                    if sim.task_game is not None and hasattr(sim.task_game, "home"):
+                        sim.task_game.home()
+                    else:
+                        for s in S.SIDES:
+                            sim.arms.start_homing(s)
                 elif t == "cmd" and sim.task_game is None:   # a candidate can't reset a task game
                     try:
                         sim.command(data.get("cmd", ""))
