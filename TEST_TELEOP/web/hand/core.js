@@ -22,8 +22,14 @@ export const SETTINGS = {
   pinchOn: 0.32, pinchOff: 0.5, // thumb-index tips / palm length: closed below, open above (hysteresis: no flicker)
   // One Euro filter (adaptive: steady when the hand is still, little lag when it moves)
   pos: { minCutoff: 0.45, beta: 5, dCutoff: 1.0 },    // position [m]
-  depth: { minCutoff: 0.3, beta: 2.5, dCutoff: 1.0 },  // distance from the camera (the noisiest) [m]
+  depth: { minCutoff: 0.15, beta: 2.0, dCutoff: 1.0 },  // distance from the camera (the noisiest) [m]
   rot: { minCutoff: 0.5, beta: 0.4, dCutoff: 1.0 },    // orientation (per rad/s)
+  refDepth: { minCutoff: 0.15, beta: 0.5, dCutoff: 1.0 },   // the reference distance that scales left/right and up/down
+  // a dead band ("backlash") after the filters: while the hand stays within this of where the
+  // output is, nothing moves (a still hand holds the robot perfectly still); beyond it the output
+  // follows from the band's edge (smoothly, no jump)
+  deadPos: [0.003, 0.003, 0.012],   // [m] camera x (left/right), y (up/down), z (toward/away: the noisiest)
+  deadRot: 2.0,                // [deg]
   maxFrame: 640,               // frames are scaled to this long side for the tracker (faster, same result)
 };
 
@@ -60,6 +66,41 @@ export class OneEuro {
     const a = alpha(this.minCutoff + this.beta * speed(this.dx), dt);
     this.x = x.map((v, i) => this.x[i] + a * (v - this.x[i]));
     return this.x;
+  }
+}
+
+// ------------------------------------------------------------ dead band (backlash)
+/** A vector that moves only when the input leaves a band around it (half-widths per axis: an
+ *  ellipsoid), and then just enough to keep the input on the band's edge: tiny wobbles are
+ *  ignored, motion is kept. */
+export class Backlash {
+  constructor(widths) { this.w = widths; this.x = null; }
+  reset() { this.x = null; }
+  filter(v) {
+    if (this.x === null) { this.x = v.slice(); return this.x; }
+    const d = v.map((u, i) => u - this.x[i]);
+    const n = Math.hypot(...d.map((u, i) => u / this.w[i]));     // (1 = on the band's edge)
+    if (n > 1) this.x = this.x.map((u, i) => u + d[i] * (1 - 1 / n));
+    return this.x;
+  }
+}
+/** The same for an orientation (quaternion w, x, y, z): it turns only past `deg`. */
+export class BacklashQuat {
+  constructor(deg) { this.rad = deg * Math.PI / 180; this.q = null; }
+  reset() { this.q = null; }
+  filter(q) {
+    if (this.q === null) { this.q = q.slice(); return this.q; }
+    let dot = q[0] * this.q[0] + q[1] * this.q[1] + q[2] * this.q[2] + q[3] * this.q[3];
+    if (dot < 0) { q = q.map(x => -x); dot = -dot; }
+    const ang = 2 * Math.acos(Math.min(1, dot));
+    if (ang > this.rad) {                                   // (slerp toward q, keeping `rad` behind it)
+      const f = 1 - this.rad / ang, th = ang / 2;
+      const a = Math.sin((1 - f) * th) / Math.sin(th), b = Math.sin(f * th) / Math.sin(th);
+      const r = this.q.map((x, i) => a * x + b * q[i]);
+      const n = Math.hypot(...r);
+      this.q = r.map(x => x / n);
+    }
+    return this.q;
   }
 }
 
@@ -141,6 +182,9 @@ export class HandControl {
     this.fPos = new OneEuro(SETTINGS.pos);
     this.fDepth = new OneEuro(SETTINGS.depth);
     this.fRot = new OneEuro(SETTINGS.rot);
+    this.fRef = new OneEuro(SETTINGS.refDepth);
+    this.bPos = new Backlash(SETTINGS.deadPos);
+    this.bRot = new BacklashQuat(SETTINGS.deadRot);
     this.frames = [];
   }
 
@@ -195,9 +239,14 @@ export class HandControl {
         this.pinched = this.pinched ? hp.pinch < SETTINGS.pinchOff : hp.pinch < SETTINGS.pinchOn;
       state.gesture = this.fist ? 'fist' : this.pinched ? 'pinch' : 'open';
       state.gripping = this.pinched;
-      // smoothed position (depth filtered on its own: it is the noisiest)
+      // position: left/right and up/down from where the hand is in the image, scaled by a steady
+      // reference distance (the per-frame distance, from the palm's size, is the noisiest number:
+      // scaling by it shook the sideways motion too); forward/back from the distance, filtered
+      // on its own; then the dead band (a still hand: no motion at all)
       const D = this.fDepth.filter([hp.D], t)[0];
-      const camPos = this.fPos.filter([hp.pos[0] * D / hp.D, hp.pos[1] * D / hp.D, D], t);
+      const Dref = this.fRef.filter([hp.D], t)[0];
+      const camPos = this.fPos.filter([hp.pos[0] * Dref / hp.D, hp.pos[1] * Dref / hp.D, D], t);
+      const held = this.bPos.filter(camPos);
       state.depth = D;
       // orientation: the hand's frame in MuJoCo axes, smoothed as a quaternion
       const Rmj = mulMM(CAM_TO_MJ, hp.R);
@@ -205,12 +254,12 @@ export class HandControl {
       if (this.fRot.x && q[0] * this.fRot.x[0] + q[1] * this.fRot.x[1] + q[2] * this.fRot.x[2] + q[3] * this.fRot.x[3] < 0) q = q.map(x => -x);
       q = this.fRot.filter(q, t, (d) => 2 * Math.hypot(d[1], d[2], d[3]));
       const qn = Math.hypot(...q);
-      q = q.map(x => x / qn);
+      q = this.bRot.filter(q.map(x => x / qn));
       const vy = st.view_yaw ?? 0;
       if (Math.abs(vy - this.lastVY) > 0.005) { this.lastVY = vy; this.epoch++; }
       const rotation = st.task_game?.rotation || 'yaw';
       if (rotation !== this.lastRot) { this.lastRot = rotation; this.epoch++; }   // (re-anchor: no jump)
-      const mj0 = mulMV(CAM_TO_MJ, camPos);
+      const mj0 = mulMV(CAM_TO_MJ, held);
       const cv = Math.cos(vy), sv = Math.sin(vy);
       const mj = [cv * mj0[0] - sv * mj0[1], sv * mj0[0] + cv * mj0[1], mj0[2]];
       const zr = [[cv, -sv, 0], [sv, cv, 0], [0, 0, 1]];
