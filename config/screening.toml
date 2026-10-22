@@ -37,6 +37,7 @@ table_clearance = 0.02         # [m] the wrist and forearm keep at least this fa
 
 [controls]
 motion_scale = 1.0             # the robot moves this many cm per cm the phone moves
+hand_smoothing_s = 0.04       # the same for a hand tracked by a camera (it is smoothed on the device already)
 smoothing_s = 0.12             # smooths the phone's motion (it sends ~30 positions a second); higher =
                                # smoother but the arm follows a little later. 0 = off
 
@@ -504,8 +505,8 @@ handle_length = 0.12
 [[phases]]
 key = "pair"
 kind = "pair"
-title = "Connect your phone"
-text = "Scan the QR code with your Android phone, open the link in Chrome and tap START CONTROLLER. Hold the phone upright, screen facing you, like a camera."
+title = "Hand control"
+text = "Start the camera and follow the steps: your open hand drives the robot, a fist pauses it, a pinch grips."
 
 [[phases]]
 key = "reach"

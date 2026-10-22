@@ -464,6 +464,10 @@ class ScreenGame:
         mt = self.metrics[ph.key]
         tel = self.sim.arms.teleop[self.side]
         mt["tracking_glitches"] = tel.glitches - self._glitch0       # (tracking jumps the arm ignored)
+        # a camera-tracked hand is smoothed on its device already: less smoothing here (less lag)
+        by_hand = (self.sim.latest_input or {}).get("tracker") == "hand"
+        self.sim.arms.smoothing = (self.cfg.hand_smoothing if by_hand else self.cfg.smoothing) or None
+        mt["controller"] = "hand" if by_hand else "phone"
         if self.wire is not None and self._wire_tick(mt, dt):
             self._end_phase(True)
             return

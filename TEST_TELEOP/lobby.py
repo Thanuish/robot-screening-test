@@ -433,6 +433,23 @@ def make_app(args) -> web.Application:
             return page("Robot control test", "<h1>Link not active</h1><p>Open the test on your computer first.</p>")
         return static_page("phone.html", code)
 
+    async def hand_camera(request):
+        """A phone as the hand camera (any phone: only its camera and browser are needed)."""
+        code, c = lookup(request.match_info["code"])
+        if c is None or c["status"] != "playing":
+            return page("Robot control test", "<h1>Link not active</h1><p>Open the test on your computer first.</p>")
+        return static_page("hand.html", code)
+
+    async def qr_hand(request):
+        import segno
+        code, c = lookup(request.match_info["code"])
+        if c is None:
+            raise web.HTTPNotFound()
+        buf = io.BytesIO()
+        segno.make(f"{public_base(request)}/h/{code}", error="m").save(buf, kind="svg", scale=8, border=2,
+                                                                        dark="#000", light="#fff")
+        return web.Response(body=buf.getvalue(), content_type="image/svg+xml")
+
     async def qr(request):
         import segno
         code, c = lookup(request.match_info["code"])
@@ -586,6 +603,8 @@ def make_app(args) -> web.Application:
     app.router.add_get("/play/{code}", play)
     app.router.add_get("/m/{code}", phone)
     app.router.add_get("/qr/{code}.svg", qr)
+    app.router.add_get("/h/{code}", hand_camera)
+    app.router.add_get("/qrh/{code}.svg", qr_hand)
     app.router.add_get("/phone-url/{code}", phone_url)
     app.router.add_get("/s/{code}/scene.json", scene_json)
     app.router.add_get("/s/{code}/ws", ws_relay)

@@ -1,9 +1,10 @@
 // Screening monitor overlay: shows the phase, instructions, timer and progress from the
-// simulator's status (the 'teleop-status' events of main.js), and the QR code for the phone.
+// simulator's status (the 'teleop-status' events of main.js), and runs the hand control (a
+// webcam watches the candidate's hand; or a phone's camera does, on its own page).
+import { preload, HandControl, openCamera } from '/test-static/hand/core.js';
+import { drawHand, Checklist, COLORS, LABELS } from '/test-static/hand/ui.js';
 const $ = (id) => document.getElementById(id);
 const code = window.TELEOP_BASE.split('/').pop();
-
-fetch(`/phone-url/${code}`).then(r => r.json()).then(j => { $('pairUrl').textContent = j.url; }).catch(() => {});
 
 let lastMsg = '', toastTimer = 0;
 function toast(text) {
@@ -153,31 +154,72 @@ window.addEventListener('teleop-scene', setupViewAids);
 if (window.__teleop) setupViewAids();
 
 let wasHoming = false;
-// ------------------------------------------------------------ webcam hand tracking (no phone)
-// handtrack.js: the hand in front of the webcam drives the arm, sent like the phone's input.
-let lastStatus = null, hand = null;
-$('handStart').addEventListener('click', async () => {
-  if (hand) return;
-  $('handErr').textContent = '';
-  $('handStart').disabled = true;
-  $('handStart').textContent = 'Starting the webcam…';
+// ------------------------------------------------------------ hand control
+// The tracker starts loading now (a few seconds the first time), the camera when the candidate
+// presses the button; the checklist (hand, fist, pinch, open) must be done before the hand
+// drives the robot. A phone can be the camera instead (/h/<code>): then this page only watches.
+let lastStatus = null, cam = null, hand = null, handState = null;
+const tracker = preload();
+tracker.then(({ delegate }) => {
+  $('trackerState').textContent = `Hand tracker ready (${delegate === 'GPU' ? 'graphics chip' : 'processor'})`;
+  $('trackerState').className = 'ok';
+}).catch((e) => {
+  $('trackerState').textContent = 'The hand tracker could not load: ' + e.message + '. Check the internet connection and reload.';
+  $('trackerState').className = 'bad';
+});
+const checklist = new Checklist($('checklist'), () => {
+  hand.arm(true);                                         // (now the hand drives: the test goes on)
+  $('handBox').classList.remove('hidden');
+});
+function setChip(el, state) {
+  const g = state?.gesture || 'none';
+  const label = !state?.tracked ? 'NO HAND' : (g === 'open' && !state.driving ? 'READY' : LABELS[g]);
+  el.style.color = !state?.tracked ? COLORS.none : (g === 'open' && !state.driving ? '#7fb4ff' : COLORS[g]);
+  el.querySelector('b').textContent = label;
+}
+function drawLoop() {
+  requestAnimationFrame(drawLoop);
+  if (!cam) return;
+  if (!$('start').classList.contains('hidden')) drawHand($('startCam'), cam.video, handState, { dim: 0.15 });
+  if (!$('handBox').classList.contains('hidden')) drawHand($('handPreview'), cam.video, handState, { dim: 0.2 });
+}
+requestAnimationFrame(drawLoop);
+$('camBtn').addEventListener('click', async () => {
+  if (cam) return;
+  $('camBtn').disabled = true;
+  $('camBtn').textContent = 'Starting the camera…';
   try {
-    const { startHandTracking } = await import('/test-static/handtrack.js');
-    $('handBox').classList.remove('hidden');
-    hand = await startHandTracking({
+    cam = await openCamera('user');
+    $('camOverlay').classList.add('hidden');
+    $('startChip').querySelector('b').textContent = 'LOADING';
+    await tracker;
+    hand = new HandControl({
       send: (m) => window.__teleop?.send?.(m),
       status: () => lastStatus,
-      preview: $('handPreview'),
-      onInfo: (text, ok) => { $('handInfo').textContent = text; $('handInfo').className = ok ? 'ok' : 'bad'; },
+      onFrame: (st) => {
+        handState = st;
+        checklist.update(true, st);
+        setChip($('startChip'), st);
+        setChip($('handChip'), st);
+        $('handStats').textContent = st.tracked ? `${st.fps} fps · ${st.latency} ms` : `${st.fps} fps`;
+      },
     });
-    $('help').classList.add('hidden');                    // (the phone's help; the hand box says the keys)
-    $('handStart').textContent = 'Hand tracking on';
+    await hand.start(cam.video);
+    $('camBtn').classList.add('hidden');
   } catch (e) {
-    $('handErr').textContent = 'Could not start the webcam hand tracking: ' + (e.message || e);
-    $('handStart').disabled = false;
-    $('handStart').textContent = 'USE MY HAND (WEBCAM)';
-    $('handBox').classList.add('hidden');
+    $('camBtn').disabled = false;
+    $('camBtn').textContent = 'Start the camera';
+    $('trackerState').textContent = 'Could not start the camera: ' + (e.message || e) + '. Allow the camera for this page, or use a phone as the camera.';
+    $('trackerState').className = 'bad';
+    if (cam) { cam.stop(); cam = null; }
   }
+});
+$('phoneCamBtn').addEventListener('click', (e) => {
+  e.preventDefault();
+  $('phoneCamQr').classList.toggle('hidden');
+});
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyH' && hand?.armed) window.__teleop?.send?.({ type: 'home' });
 });
 window.addEventListener('teleop-status', (ev) => { lastStatus = ev.detail; });
 
@@ -187,12 +229,9 @@ window.addEventListener('teleop-status', (ev) => {
   $('phaseTitle').textContent = g.round ? `${g.title}  ·  round ${g.round}` : g.title;
   $('phaseText').textContent = g.text;
   const pairing = g.kind === 'pair';
-  $('pair').classList.toggle('hidden', !pairing);
-  $('phoneBadge').classList.toggle('hidden', pairing || g.finished);
-  $('help').classList.toggle('hidden', pairing || g.finished || !!hand);
+  $('start').classList.toggle('hidden', !pairing);
+  if (!pairing && cam && hand?.armed) $('handBox').classList.toggle('hidden', !!g.finished);
   $('done').classList.toggle('hidden', !g.finished);
-  $('phoneState').innerHTML = g.phone ? '<span class="ok">● Phone connected</span>'
-                                      : '<span class="bad">● Phone not connected</span>';
   // steps
   const steps = $('steps');
   if (steps.children.length !== g.steps_total) {

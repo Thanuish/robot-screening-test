@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0b0d13" />
+  <title>Hand camera</title>
+  <style>
+    :root { --acc1: #7c5cff; --acc2: #22d3ee; --line: rgba(255,255,255,.1); }
+    html, body { margin: 0; height: 100%; background: #0b0d13; color: #eef1f6; overflow: hidden;
+      font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; -webkit-user-select: none; user-select: none; }
+    .hidden { display: none !important; }
+    body { background: radial-gradient(800px 500px at 20% 0%, rgba(124,92,255,.25), transparent 60%),
+                       radial-gradient(700px 500px at 100% 100%, rgba(34,211,238,.18), transparent 60%), #0b0d13; }
+    #wrap { position: fixed; inset: 0; display: flex; flex-direction: column; padding: max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom)); gap: 12px; }
+    header { display: flex; align-items: center; gap: 12px; }
+    .logo { width: 42px; height: 42px; border-radius: 13px; display: grid; place-items: center; font-size: 24px;
+            background: linear-gradient(135deg, var(--acc1), var(--acc2)); }
+    header h1 { margin: 0; font-size: 20px; } header p { margin: 0; color: #9aa3b2; font-size: 13px; }
+    .cam { position: relative; flex: 1; min-height: 0; border-radius: 20px; overflow: hidden; border: 1px solid var(--line); background: #06070b; }
+    .cam canvas { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .chip { position: absolute; left: 12px; top: 12px; display: inline-flex; align-items: center; gap: 8px; padding: 7px 13px;
+            border-radius: 999px; font: 800 13px/1 system-ui, sans-serif; letter-spacing: .06em; background: rgba(0,0,0,.6); border: 1px solid var(--line); }
+    .chip i { width: 9px; height: 9px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
+    #stats { position: absolute; right: 12px; top: 14px; font-size: 12px; color: #aeb5c3; }
+    #overlay { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 22px; color: #cfd5e0; }
+    #checklist { list-style: none; margin: 0; padding: 0; }
+    #checklist li { display: flex; gap: 10px; padding: 7px 10px; border-radius: 10px; color: #7f8899; font-size: 14px; }
+    #checklist li .tick { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 2px solid #4a5161; }
+    #checklist li.now { color: #fff; background: rgba(124,92,255,.16); }
+    #checklist li.done { display: none; }
+    .row { display: flex; gap: 10px; }
+    .btn { flex: 1; border: 0; border-radius: 16px; padding: 16px; font: 800 17px system-ui, sans-serif; color: #fff;
+           background: linear-gradient(135deg, var(--acc1), var(--acc2)); }
+    .btn.ghost { background: rgba(255,255,255,.06); border: 1px solid var(--line); font-weight: 700; }
+    #msg { font-size: 13px; color: #9aa3b2; min-height: 18px; }
+    #msg.bad { color: #ff8a80; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <header>
+      <div class="logo">✋</div>
+      <div><h1>Hand camera</h1><p id="phase">Connecting…</p></div>
+    </header>
+    <div class="cam">
+      <canvas id="view" width="480" height="640"></canvas>
+      <span class="chip" id="chip" style="color:#9aa3b2"><i></i><b>CAMERA OFF</b></span>
+      <span id="stats"></span>
+      <div id="overlay"><div><b>Stand this phone up in front of you</b>, screen toward you (leaning on something),
+        about an arm's length away. Then press <b>Start</b> and allow the camera.<br><br>
+        <span style="color:#7d8596;font-size:13px">The video stays on this phone: only your hand's position is sent.</span></div></div>
+    </div>
+    <ol id="checklist"></ol>
+    <div id="msg"></div>
+    <div class="row">
+      <button class="btn" id="startBtn">Start</button>
+      <button class="btn ghost hidden" id="flipBtn">Switch camera</button>
+      <button class="btn ghost hidden" id="homeBtn">HOME</button>
+    </div>
+  </div>
+  <script>window.TELEOP_BASE = '/s/__CODE__';</script>
+  <script type="module" src="/test-static/hand_phone.js?v=__BOOT__"></script>
+</body>
+</html>

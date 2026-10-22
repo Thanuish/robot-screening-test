@@ -34,20 +34,6 @@
     #count { font: 800 160px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 4px 30px rgba(0,0,0,.6); }
     #toast { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); z-index: 11; background: rgba(20,22,27,.9);
       border: 1px solid #3a3f4a; border-radius: 12px; padding: 12px 22px; font-size: 20px; transition: opacity .4s; }
-    #pair { position: fixed; inset: 0; z-index: 12; display: flex; align-items: center; justify-content: center;
-      background: rgba(15,16,20,.88); }
-    #pair .card { background: #20232a; border: 1px solid #3a3f4a; border-radius: 16px; padding: 28px 34px; display: flex; gap: 32px; max-width: 900px; }
-    #pair img { width: 260px; height: 260px; background: #fff; border-radius: 8px; }
-    #pair h1 { margin: 0 0 10px; font-size: 26px; }
-    #pair ol { padding-left: 20px; color: #d6d6d6; } #pair li { margin: 6px 0; }
-    #pairUrl { font: 13px ui-monospace, monospace; color: #8ab; word-break: break-all; }
-    #phoneBadge { position: fixed; right: 18px; bottom: 18px; z-index: 10; background: rgba(20,22,27,.88);
-      border: 1px solid #3a3f4a; border-radius: 12px; padding: 10px 14px; display: flex; gap: 12px; align-items: center; font-size: 14px; }
-    #phoneBadge img { width: 96px; height: 96px; background: #fff; border-radius: 6px; }
-    #phoneBadge .ok { color: #4cd07d; } #phoneBadge .bad { color: #ff7070; }
-    #help { position: fixed; left: 18px; bottom: 18px; z-index: 10; background: rgba(20,22,27,.85); border: 1px solid #3a3f4a;
-      border-radius: 12px; padding: 10px 14px; font-size: 14px; color: #cfd3da; max-width: min(400px, calc(100vw - 300px)); }
-    #help b { color: #fff; }
     #done { position: fixed; inset: 0; z-index: 13; display: flex; align-items: center; justify-content: center; background: rgba(15,16,20,.92); }
     #done .card { background: #20232a; border: 1px solid #3a3f4a; border-radius: 16px; padding: 34px 40px; max-width: 560px; text-align: center; }
     #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 18px; color: #aaa; z-index: 5; pointer-events: none; }
@@ -55,15 +41,50 @@
             border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
 #sideView span { position: absolute; left: 6px; top: 4px; font-size: 11px; letter-spacing: .08em; color: #fff;
                  background: rgba(20,22,27,.7); padding: 1px 6px; border-radius: 3px; }
-.handAlt { margin-top: 18px; color: #c9ced8; }
-#handStart { margin-top: 6px; padding: 12px 18px; font-size: 16px; font-weight: 700; border: 0; border-radius: 10px;
-             background: #5b3fc4; color: #fff; cursor: pointer; }
-#handErr { color: #ff8a80; margin-top: 6px; font-size: 14px; }
-#handBox { position: fixed; left: 18px; bottom: 18px; z-index: 13; background: rgba(20,22,27,.9); border: 1px solid #3a3f4a;
-           border-radius: 10px; padding: 8px; width: 272px; font-size: 12px; color: #d6d6d6; }
-#handBox canvas { width: 256px; height: 192px; border-radius: 6px; display: block; background: #000; }
-#handInfo { margin-top: 6px; } #handInfo.ok { color: #4cd07d; } #handInfo.bad { color: #ffd24a; }
-#handBox .keys { margin-top: 4px; color: #9aa0ab; }
+/* ---- hand control */
+:root { --acc1: #7c5cff; --acc2: #22d3ee; --glass: rgba(18,20,28,.78); --line: rgba(255,255,255,.09); }
+#start { position: fixed; inset: 0; z-index: 12; display: flex; align-items: center; justify-content: center;
+         background: radial-gradient(1200px 700px at 30% 10%, rgba(124,92,255,.22), transparent 60%),
+                     radial-gradient(900px 600px at 90% 100%, rgba(34,211,238,.16), transparent 60%), rgba(9,10,14,.9);
+         backdrop-filter: blur(6px); }
+.startCard { width: min(1080px, 94vw); background: var(--glass); border: 1px solid var(--line); border-radius: 24px;
+             padding: 26px 30px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+.startHead { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+.logo { width: 54px; height: 54px; border-radius: 16px; display: grid; place-items: center; font-size: 30px;
+        background: linear-gradient(135deg, var(--acc1), var(--acc2)); box-shadow: 0 8px 26px rgba(124,92,255,.45); }
+.startHead h1 { margin: 0; font-size: 30px; letter-spacing: -.01em; }
+.startHead p { margin: 2px 0 0; color: #aab1c0; }
+.startBody { display: grid; grid-template-columns: 1.35fr 1fr; gap: 26px; align-items: start; }
+.cam { position: relative; border-radius: 18px; overflow: hidden; border: 1px solid var(--line); background: #0b0d13; aspect-ratio: 4 / 3; }
+.cam canvas { width: 100%; height: 100%; display: block; }
+.cam .chip { position: absolute; left: 12px; top: 12px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font: 700 13px/1 system-ui, sans-serif;
+        letter-spacing: .06em; background: rgba(0,0,0,.55); border: 1px solid var(--line); }
+.chip i { width: 9px; height: 9px; border-radius: 50%; background: currentColor; box-shadow: 0 0 10px currentColor; }
+#camOverlay { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: #c9cfdb; padding: 20px; }
+#checklist { list-style: none; margin: 0 0 16px; padding: 0; }
+#checklist li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; color: #8790a2; transition: all .25s; }
+#checklist li .tick { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 2px solid #4a5161; margin-top: 1px; transition: all .25s; }
+#checklist li.now { color: #fff; background: rgba(124,92,255,.14); }
+#checklist li.now .tick { border-color: var(--acc2); box-shadow: 0 0 0 4px rgba(34,211,238,.15); }
+#checklist li.done { color: #cfe9da; }
+#checklist li.done .tick { border-color: #3ee08f; background: #3ee08f url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12l5 5 9-10' stroke='%230b2a1a' stroke-width='3' fill='none'/%3E%3C/svg%3E") center/16px no-repeat; }
+.btn { border: 0; border-radius: 14px; padding: 14px 20px; font: 700 16px system-ui, sans-serif; color: #fff; cursor: pointer;
+       background: linear-gradient(135deg, var(--acc1), var(--acc2)); box-shadow: 0 10px 30px rgba(124,92,255,.35); }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn.ghost { background: transparent; border: 1px solid var(--line); box-shadow: none; color: #cdd3df; font-weight: 600; padding: 10px 14px; }
+#trackerState { margin-top: 10px; font-size: 13px; color: #8f97a8; }
+#trackerState.ok { color: #3ee08f; } #trackerState.bad { color: #ff8a80; }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0 4px; }
+.legend span { font-size: 13px; color: #c5cbd7; padding: 6px 10px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid var(--line); }
+#phoneCam { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); color: #aab1c0; font-size: 14px; }
+#phoneCam img { width: 150px; height: 150px; background: #fff; border-radius: 10px; display: block; margin-top: 10px; }
+#handBox { position: fixed; left: 18px; bottom: 18px; z-index: 11; width: 250px; background: var(--glass); border: 1px solid var(--line);
+           border-radius: 16px; padding: 8px; backdrop-filter: blur(8px); box-shadow: 0 14px 40px rgba(0,0,0,.4); }
+#handBox canvas { width: 100%; aspect-ratio: 4 / 3; border-radius: 10px; display: block; background: #0b0d13; }
+#handBox .row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: #8f97a8; }
+#handBox .keys { margin-top: 6px; font-size: 12px; color: #9aa1b0; }
+@media (max-width: 820px) { .startBody { grid-template-columns: 1fr; } }
 #conn { position: fixed; top: 6px; right: 8px; z-index: 20; font-size: 12px; }
     #conn.ok { color: #4cd07d; } #conn.bad { color: #ff7070; }
   </style>
@@ -102,49 +123,39 @@
   <div id="center"><div id="count"></div></div>
   <div id="toast" style="opacity:0"></div>
 
-  <div id="pair">
-    <div class="card">
-      <img id="qrBig" alt="QR code" src="/qr/__CODE__.svg">
-      <div>
-        <h1>Connect your phone</h1>
-        <ol>
-          <li>Take an <b>Android phone</b> and scan this QR code with its camera.</li>
-          <li>Open the link in <b>Chrome</b> and tap <b>START CONTROLLER</b>. Allow the camera if asked
-            (it is only used to track how you move the phone; nothing is recorded from it).</li>
-          <li>Hold the phone <b>upright, screen facing you, pointing at this screen</b>.</li>
-        </ol>
-        <p>Or type this address on the phone:</p>
-        <div id="pairUrl"></div>
-        <p class="handAlt">No Android phone? Control the robot with <b>your hand</b> in front of the webcam:</p>
-        <button id="handStart">USE MY HAND (WEBCAM)</button>
-        <div id="handErr"></div>
+  <div id="start">
+    <div class="startCard">
+      <div class="startHead">
+        <div class="logo">✋</div>
+        <div><h1>Hand control</h1><p>Your hand drives the robot. No phone, no app: just a camera.</p></div>
+      </div>
+      <div class="startBody">
+        <div class="cam">
+          <canvas id="startCam" width="640" height="480"></canvas>
+          <span class="chip" id="startChip" style="color:#9aa3b2"><i></i><b>CAMERA OFF</b></span>
+          <div id="camOverlay"><div>Sit about an arm's length from the screen.<br>Press <b>Start the camera</b> and allow it.<br>
+            <span style="color:#7d8596;font-size:13px">The video stays on this computer: only your hand's position is sent.</span></div></div>
+        </div>
+        <div>
+          <ol id="checklist"></ol>
+          <button class="btn" id="camBtn">Start the camera</button>
+          <div id="trackerState">Loading the hand tracker…</div>
+          <div class="legend"><span>✋ open: drive</span><span>✊ fist: pause</span><span>🤏 pinch: grip</span></div>
+          <div id="phoneCam">No webcam? Use <b>any phone</b> as the camera: stand it up in front of you, screen toward you, and
+            <a href="#" id="phoneCamBtn" style="color:#9bd8ff">show its QR code</a>.
+            <img id="phoneCamQr" class="hidden" alt="QR code for the phone camera" src="/qrh/__CODE__.svg"></div>
+        </div>
       </div>
     </div>
   </div>
 
   <div id="handBox" class="hidden">
-    <canvas id="handPreview" width="256" height="192"></canvas>
-    <div id="handInfo">Starting the webcam…</div>
-    <div class="keys"><b>SPACE</b> held = move · <b>pinch</b> = grab · <b>C</b> re-centre · <b>H</b> home</div>
+    <canvas id="handPreview" width="320" height="240"></canvas>
+    <div class="row"><span class="chip" id="handChip" style="color:#9aa3b2"><i></i><b>NO HAND</b></span><span id="handStats"></span></div>
+    <div class="keys">✋ drive · ✊ pause · 🤏 grip · <b>H</b> home · arrows: view</div>
   </div>
 
-  <div id="phoneBadge" class="hidden">
-    <img alt="QR code" src="/qr/__CODE__.svg">
-    <div><div id="phoneState"></div><div style="color:#999;font-size:12px">Lost the phone?<br>Scan again.</div></div>
-  </div>
 
-  <div id="help" class="hidden">
-    <b>Phone controls</b><br>
-    Hold <b>MOVE</b> and move the phone: the gripper moves the same way.<br>
-    Let go of MOVE to move your hand without moving the robot.<br>
-    Turn the phone left / right: the gripper turns. In <b>task 3</b>, tilting and twisting the
-    phone also tilts and twists the gripper.<br>
-    <b>GRAB</b> closes the gripper, <b>RELEASE</b> opens it.<br>
-    <b>RE-CENTER</b>: point the phone at this screen and tap it if directions feel wrong.<br>
-    <b>HOME</b> brings the arm back to its start pose if it gets stuck.<br>
-    <b>View</b> (keyboard): arrow keys turn and tilt, <b>+</b> / <b>−</b> zoom, <b>R</b> resets.
-    Or drag and scroll with the mouse. Forward on the phone is always into the screen.
-  </div>
 
   <div id="done" class="hidden"><div class="card">
     <h1>Thank you!</h1>
