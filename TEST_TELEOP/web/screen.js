@@ -179,6 +179,28 @@ function updateTilt() { hand?.setTilt(tiltKeys.KeyW - tiltKeys.KeyS, tiltKeys.Ke
 window.addEventListener('keydown', (e) => {
   if (e.code in tiltKeys) { tiltKeys[e.code] = 1; updateTilt(); }
 });
+// C: the camera picture bigger / smaller
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyC' && !e.repeat && !(e.target instanceof HTMLInputElement)) $('handBox').classList.toggle('big');
+});
+// The tracker slow (under 22 pictures a second for 3 s, the camera giving more): the 3D view
+// draws fewer pixels and frames, step by step (it shares the graphics chip). While the start
+// screen covers it, it hardly draws at all.
+const RENDER_STEPS = [{ maxPixels: 1.6e6, maxFps: 40 }, { maxPixels: 1.0e6, maxFps: 30 }, { maxPixels: 0.6e6, maxFps: 30 },
+                      { maxPixels: 0.4e6, maxFps: 24 }];
+let renderStep = 0, slowSince = null;
+function adaptRender(st) {
+  const T = window.__teleop;
+  if (!T?.setBudget) return;
+  const covered = !$('start').classList.contains('hidden');
+  const want = covered ? { maxPixels: RENDER_STEPS[renderStep].maxPixels, maxFps: 5 } : RENDER_STEPS[renderStep];
+  if (T.budget.maxFps !== want.maxFps || T.budget.maxPixels !== want.maxPixels) T.setBudget(want);
+  const now = performance.now();
+  if (st.fps < 22 && renderStep < RENDER_STEPS.length - 1) {
+    if (slowSince === null) slowSince = now;
+    else if (now - slowSince > 3000) { renderStep++; slowSince = null; console.info('render budget lowered', RENDER_STEPS[renderStep]); }
+  } else slowSince = null;
+}
 window.addEventListener('keyup', (e) => { if (e.code in tiltKeys) { tiltKeys[e.code] = 0; updateTilt(); } });
 window.addEventListener('blur', () => { for (const k in tiltKeys) tiltKeys[k] = 0; updateTilt(); });
 function setChip(el, state) {
@@ -187,9 +209,11 @@ function setChip(el, state) {
   el.style.color = !state?.tracked ? COLORS.none : (g === 'open' && !state.driving ? '#7fb4ff' : COLORS[g]);
   el.querySelector('b').textContent = label;
 }
-function drawLoop() {
+let lastDraw = 0;
+function drawLoop(now) {
   requestAnimationFrame(drawLoop);
-  if (!cam) return;
+  if (!cam || now - lastDraw < 30) return;            // (the camera gives ~30 pictures a second: no more)
+  lastDraw = now;
   if (!$('start').classList.contains('hidden')) drawHand($('startCam'), cam.video, handState, { dim: 0.15 });
   if (!$('handBox').classList.contains('hidden')) drawHand($('handPreview'), cam.video, handState, { dim: 0.2 });
 }
@@ -214,6 +238,7 @@ $('camBtn').addEventListener('click', async () => {
         setChip($('startChip'), st);
         setChip($('handChip'), st);
         $('handStats').textContent = st.tracked ? `${st.fps} fps · ${st.latency} ms` : `${st.fps} fps`;
+        adaptRender(st);
       },
     });
     await hand.start(cam.video);

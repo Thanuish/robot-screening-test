@@ -45,8 +45,7 @@
 :root { --acc1: #7c5cff; --acc2: #22d3ee; --glass: rgba(18,20,28,.78); --line: rgba(255,255,255,.09); }
 #start { position: fixed; inset: 0; z-index: 12; display: flex; align-items: center; justify-content: center;
          background: radial-gradient(1200px 700px at 30% 10%, rgba(124,92,255,.22), transparent 60%),
-                     radial-gradient(900px 600px at 90% 100%, rgba(34,211,238,.16), transparent 60%), rgba(9,10,14,.9);
-         backdrop-filter: blur(6px); }
+                     radial-gradient(900px 600px at 90% 100%, rgba(34,211,238,.16), transparent 60%), rgba(9,10,14,.96); }
 .startCard { width: min(1080px, 94vw); background: var(--glass); border: 1px solid var(--line); border-radius: 24px;
              padding: 26px 30px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
 .startHead { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
@@ -81,8 +80,9 @@
 .legend span { font-size: 13px; color: #c5cbd7; padding: 6px 10px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid var(--line); }
 #phoneCam { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); color: #aab1c0; font-size: 14px; }
 #phoneCam img { width: 150px; height: 150px; background: #fff; border-radius: 10px; display: block; margin-top: 10px; }
-#handBox { position: fixed; left: 18px; bottom: 18px; z-index: 11; width: 250px; background: var(--glass); border: 1px solid var(--line);
-           border-radius: 16px; padding: 8px; backdrop-filter: blur(8px); box-shadow: 0 14px 40px rgba(0,0,0,.4); }
+#handBox { position: fixed; left: 18px; bottom: 18px; z-index: 11; width: clamp(300px, 28vw, 480px); background: rgba(18,20,28,.92);
+           border: 1px solid var(--line); border-radius: 16px; padding: 8px; box-shadow: 0 14px 40px rgba(0,0,0,.4); }
+#handBox.big { width: clamp(420px, 46vw, 900px); }
 #handBox canvas { width: 100%; aspect-ratio: 4 / 3; border-radius: 10px; display: block; background: #0b0d13; }
 #handBox .row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: #8f97a8; }
 #handBox .keys { margin-top: 6px; font-size: 12px; color: #9aa1b0; }
@@ -97,6 +97,9 @@
   <script>
     window.TELEOP_BASE = '/s/__CODE__';
     window.TELEOP_MONITOR = true;
+    // the 3D view leaves the graphics chip to the hand tracker (screen.js lowers it further when
+    // the tracker is still slow)
+    window.TELEOP_RENDER = { maxPixels: 1.6e6, maxFps: 40 };
     // the test's configuration (config/screening.toml: [view], [depth_cues], the arm...)
     window.SCREEN_CONFIG = __CONFIG__;
     // the starting view ([view]): by default first-person, like in VR: your eyes at the robot's
@@ -154,9 +157,9 @@
   </div>
 
   <div id="handBox" class="hidden">
-    <canvas id="handPreview" width="320" height="240"></canvas>
+    <canvas id="handPreview" width="640" height="480"></canvas>
     <div class="row"><span class="chip" id="handChip" style="color:#9aa3b2"><i></i><b>NO HAND</b></span><span id="handStats"></span></div>
-    <div class="keys">✋ drive · ✊ pause · 🔄 twist: turn · 🤏 pinch: grip · tilt your hand (or <b>W S A D</b>) · <b>H</b> home</div>
+    <div class="keys">✋ drive · ✊ pause · 🔄 twist: turn · 🤏 pinch: grip · tilt your hand (or <b>W S A D</b>) · <b>H</b> home · <b>C</b> bigger camera</div>
   </div>
 
 

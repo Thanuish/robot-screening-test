@@ -45,12 +45,15 @@ export const SETTINGS = {
   // many frames (~0.25 s): opening the hand changes its estimated centre, size and twist, and
   // the filters would carry that change into the robot; at that moment they start afresh
   settleFrames: 12,
-  maxFrame: 640,               // frames are scaled to this long side for the tracker (faster, same result)
+  // frames are scaled to this long side for the tracker. The tracker looks at the hand in a
+  // 224 x 224 crop of the frame: a hand ~150 px tall in a 640 px frame is blown up (blurry
+  // points); at 1280 it has the detail. (The models' cost doesn't depend on this.)
+  maxFrame: 1280,
   // the hand's full orientation (tasks with full rotation): its filter and dead band
   rot3d: { minCutoff: 0.3, beta: 0.5, dCutoff: 1.0 },
   deadRot3d: 2.5,              // [deg]
   forearm: true,               // track the forearm too (MediaPipe Pose, a second model: a little slower)
-  poseEvery: 2,                // run it on every n-th frame (the forearm moves slowly)
+  poseEvery: 3,                // run it on every n-th frame (the forearm moves slowly)
   // closing or opening a pinch bends the palm a little (its arch): the pose is held this many
   // frames, then taken up again from where the hand is (OAT's grasp stabilization)
   gripHoldFrames: 8,
@@ -436,7 +439,7 @@ function quatToMat([w, x, y, z]) {
 /** Open a camera (the front one on a phone: it stands in front of the person like a webcam). */
 export async function openCamera(facing = 'user') {
   const stream = await navigator.mediaDevices.getUserMedia({
-    audio: false, video: { facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 60, max: 60 } } });
+    audio: false, video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } });
   const video = document.createElement('video');
   video.setAttribute('playsinline', ''); video.muted = true; video.srcObject = stream;
   await video.play();

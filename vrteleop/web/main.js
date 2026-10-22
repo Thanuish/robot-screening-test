@@ -16,8 +16,17 @@ let worldEpoch = 0;           // bumped whenever the VR world is re-aligned (rec
 
 // ---------------------------------------------------------------- renderer
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(window.innerWidth, window.innerHeight);
+// A render budget (a page can set window.TELEOP_RENDER = {maxPixels, maxFps}, and change it later
+// with __teleop.setBudget): at most this many pixels drawn per frame and frames per second. A
+// laptop's built-in graphics chip shares itself with the hand tracker; a 3K screen at full
+// resolution and 120 frames a second leaves the tracker nothing.
+const BUDGET = Object.assign({ maxPixels: Infinity, maxFps: Infinity }, window.TELEOP_RENDER || {});
+function applyBudget() {
+  const css = window.innerWidth * window.innerHeight;
+  renderer.setPixelRatio(Math.max(0.5, Math.min(window.devicePixelRatio, 2, Math.sqrt(BUDGET.maxPixels / css))));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+applyBudget();
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;   // photographic highlight roll-off
 renderer.toneMappingExposure = 1.0;
@@ -275,6 +284,7 @@ async function loadScene() {
   cloths = (js.flexes || []).map(fx => makeCloth(fx, mats));
   // handle for page scripts (e.g. the screening monitor's depth cues) and the browser console
   window.__teleop = { scene, cloths, camera, orbit, mjRoot, THREE, renderer, afterRender, send,
+                      setBudget: (b) => { Object.assign(BUDGET, b); applyBudget(); }, budget: BUDGET,
                       body: (name) => bodyObjs.find(o => o.name === name) };
   window.dispatchEvent(new Event('teleop-scene'));
   document.getElementById('loading').style.display = 'none';
@@ -727,7 +737,12 @@ function smoothBodies() {
 }
 // page scripts can draw more after each frame (e.g. the screening monitor's side view)
 const afterRender = [];
-renderer.setAnimationLoop(() => {
+let lastFrame = 0;
+renderer.setAnimationLoop((now) => {
+  if (!renderer.xr.isPresenting && BUDGET.maxFps < 200) {        // (frames skipped to keep the budget)
+    if (now - lastFrame < 1000 / BUDGET.maxFps - 2) return;
+    lastFrame = now;
+  }
   handleXRInput();
   smoothBodies();
   for (const c of cloths) updateCloth(c);
@@ -738,7 +753,7 @@ renderer.setAnimationLoop(() => {
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  applyBudget();
 });
 
 // (retried: a page opened while the simulator was still starting would otherwise stay empty)
