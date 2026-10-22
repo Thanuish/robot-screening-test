@@ -37,7 +37,8 @@ table_clearance = 0.02         # [m] the wrist and forearm keep at least this fa
 
 [controls]
 motion_scale = 1.0             # the robot moves this many cm per cm the phone moves
-hand_smoothing_s = 0.04       # the same for a hand tracked by a camera (it is smoothed on the device already)
+hand_smoothing_s = 0.06       # the same for a hand tracked by a camera (it is smoothed on the device already)
+hand_motion_scale = 0.5        # a camera-tracked hand: the robot moves this many cm per cm of hand (slower = more precise, calmer)
 smoothing_s = 0.12             # smooths the phone's motion (it sends ~30 positions a second); higher =
                                # smoother but the arm follows a little later. 0 = off
 

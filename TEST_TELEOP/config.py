@@ -148,6 +148,7 @@ class Config:
     motion_scale: float
     smoothing: float             # [s] low-pass time constant on the hand's motion (0 = off)
     hand_smoothing: float        # [s] the same for a camera-tracked hand (smoothed on the device already)
+    hand_motion_scale: float     # robot motion per hand motion for a camera-tracked hand
     view: dict                   # eye, look, fov (MuJoCo frame, as main.js wants it)
     depth_cues: dict
     timing: dict
@@ -365,10 +366,11 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
         c.err("arm.base", f"{arm.base} is off the table")
 
     ctl = raw.get("controls", {})
-    c.keys(ctl, "controls", ("motion_scale", "smoothing_s", "hand_smoothing_s"))
+    c.keys(ctl, "controls", ("motion_scale", "smoothing_s", "hand_smoothing_s", "hand_motion_scale"))
     motion_scale = c.num(ctl, "motion_scale", "controls", 1.5, lo=0.1, hi=10)
     smoothing = c.num(ctl, "smoothing_s", "controls", 0.0, lo=0.0, hi=1.0)
-    hand_smoothing = c.num(ctl, "hand_smoothing_s", "controls", 0.04, lo=0.0, hi=1.0)
+    hand_smoothing = c.num(ctl, "hand_smoothing_s", "controls", 0.06, lo=0.0, hi=1.0)
+    hand_motion_scale = c.num(ctl, "hand_motion_scale", "controls", 0.5, lo=0.05, hi=10)
 
     # ---- view and depth cues
     v = raw.get("view", {})
@@ -709,7 +711,7 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
 
     if c.problems:
         raise ConfigError(p, c.problems)
-    return Config(path=Path(p), arm=arm, motion_scale=motion_scale, smoothing=smoothing, hand_smoothing=hand_smoothing,
+    return Config(path=Path(p), arm=arm, motion_scale=motion_scale, smoothing=smoothing, hand_smoothing=hand_smoothing, hand_motion_scale=hand_motion_scale,
                   view=view, depth_cues=depth_cues,
                   timing=timing, tol=tol, scoring=scoring, texts=texts, reach_target=reach_target,
                   materials=materials, objects=objects, groups=groups, markers=markers, phases=phases)

@@ -20,9 +20,9 @@ export const SETTINGS = {
   hfov: 60,                    // [deg] the camera's field of view, a guess (an error only scales the motion a little)
   pinchOn: 0.32, pinchOff: 0.5, // thumb-index tips / palm length: closed below, open above (hysteresis: no flicker)
   // One Euro filter (adaptive: steady when the hand is still, little lag when it moves)
-  pos: { minCutoff: 1.0, beta: 12, dCutoff: 1.0 },     // position [m]
-  depth: { minCutoff: 0.6, beta: 6, dCutoff: 1.0 },    // distance from the camera (the noisiest) [m]
-  rot: { minCutoff: 1.2, beta: 0.8, dCutoff: 1.0 },    // orientation (per rad/s)
+  pos: { minCutoff: 0.45, beta: 5, dCutoff: 1.0 },    // position [m]
+  depth: { minCutoff: 0.3, beta: 2.5, dCutoff: 1.0 },  // distance from the camera (the noisiest) [m]
+  rot: { minCutoff: 0.5, beta: 0.4, dCutoff: 1.0 },    // orientation (per rad/s)
   maxFrame: 640,               // frames are scaled to this long side for the tracker (faster, same result)
 };
 
@@ -93,10 +93,11 @@ export function handPose(lm, wl, W, H, f) {
   const palm = Math.max(len(sub(Q(9), Q(0))), 1e-3);
   const pinch = len(sub(Q(4), Q(8))) / palm;
   // a finger is folded in when its tip is closer to the wrist than its knuckle is (plus a little)
+  const folded = (tip, knuckle) => len(sub(Q(tip), Q(0))) < 1.15 * len(sub(Q(knuckle), Q(0)));
   let curled = 0;
-  for (const [tip, knuckle] of [[12, 9], [16, 13], [20, 17]])
-    if (len(sub(Q(tip), Q(0))) < 1.15 * len(sub(Q(knuckle), Q(0)))) curled++;
-  return { pos, D, R, a, n, pinch, curled };
+  for (const [tip, knuckle] of [[12, 9], [16, 13], [20, 17]]) if (folded(tip, knuckle)) curled++;
+  const indexFolded = folded(8, 5);
+  return { pos, D, R, a, n, pinch, curled, indexFolded };
 }
 
 // ------------------------------------------------------------ the tracker (background thread)
@@ -182,8 +183,10 @@ export class HandControl {
       const f = 0.5 / Math.tan((SETTINGS.hfov / 2) * Math.PI / 180);
       const hp = handPose(m.lm, m.wl, W, H, f);
       state.tracked = true;
-      // gestures (hysteresis): a fist pauses; a pinch (others open) grips
-      this.fist = this.fist ? hp.curled >= 2 : hp.curled >= 3;
+      // gestures (hysteresis): a fist (the index folded in too) pauses; a pinch grips and keeps
+      // driving (in a pinch the index bends toward the thumb and the others may curl: no fist)
+      // (the index folded into the palm decides: then it is a fist whatever the thumb does)
+      this.fist = hp.indexFolded && (this.fist ? hp.curled >= 2 : hp.curled >= 3);
       if (!this.fist) this.pinched = this.pinched ? hp.pinch < SETTINGS.pinchOff : hp.pinch < SETTINGS.pinchOn;
       state.gesture = this.fist ? 'fist' : this.pinched ? 'pinch' : 'open';
       state.gripping = this.pinched;
