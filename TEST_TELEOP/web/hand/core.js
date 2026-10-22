@@ -36,6 +36,10 @@ export const SETTINGS = {
   deadRot: 2.0,                // [deg]
   twist: { minCutoff: 0.6, beta: 0.6, dCutoff: 1.0 },   // the doorknob turn (per rad/s)
   tiltRate: 60,                // [deg/s] how fast the tilt keys tilt the gripper
+  // after a fist (or a lost hand) the robot drives again only once the hand has been open this
+  // many frames (~0.25 s): opening the hand changes its estimated centre, size and twist, and
+  // the filters would carry that change into the robot; at that moment they start afresh
+  settleFrames: 12,
   maxFrame: 640,               // frames are scaled to this long side for the tracker (faster, same result)
 };
 
@@ -253,6 +257,18 @@ export class HandControl {
         this.pinched = this.pinched ? hp.pinch < SETTINGS.pinchOff : hp.pinch < SETTINGS.pinchOn;
       state.gesture = this.fist ? 'fist' : this.pinched ? 'pinch' : 'open';
       state.gripping = this.pinched;
+      // settle (see SETTINGS.settleFrames): then the filters restart from the hand's pose now and
+      // the clutch anchors there (a new epoch), so opening the hand can't move the robot
+      this.openFrames = this.fist ? 0 : (this.openFrames || 0) + 1;
+      const settled = this.openFrames >= SETTINGS.settleFrames;
+      if (this.openFrames === 1) {                     // (the hand just opened: the filters start afresh ...
+        for (const fl of [this.fPos, this.fDepth, this.fRef, this.fTwist]) fl.reset();
+        this.bPos.reset();
+        this.twist = null;
+        this.twistRaw = null;
+      }
+      if (settled && !this.wasSettled) this.epoch++;    // (... and have settled when the clutch anchors)
+      this.wasSettled = settled;
       // position: left/right and up/down from where the hand is in the image, scaled by a steady
       // reference distance (the per-frame distance, from the palm's size, is the noisiest number:
       // scaling by it shook the sideways motion too); forward/back from the distance, filtered
@@ -301,9 +317,11 @@ export class HandControl {
         q = [Math.cos(yaw / 2), 0, 0, Math.sin(yaw / 2)];
       }
       pose = [...mj, ...q];
-      state.driving = this.armed && !this.fist;
+      state.driving = this.armed && settled;
     } else {
       this.fist = false;
+      this.openFrames = 0;                            // (a lost hand settles again when it is back)
+      this.wasSettled = false;
     }
     this.opts.onFrame?.(state);
     if (!this.armed) return;
