@@ -468,8 +468,9 @@ class ScreenGame:
         by_hand = (self.sim.latest_input or {}).get("tracker") == "hand"
         self.sim.arms.smoothing = (self.cfg.hand_smoothing if by_hand else self.cfg.smoothing) or None
         scale = self.cfg.hand_motion_scale if by_hand else self.cfg.motion_scale
-        if tel.pos_scale != scale:                 # (slower for a hand: more precise; the clutch re-anchors)
-            tel.pos_scale = scale
+        rscale = self.cfg.hand_rotation_scale if by_hand else 1.0
+        if tel.pos_scale != scale or tel.rot_scale != rscale:   # (slower for a hand: more precise; re-anchor)
+            tel.pos_scale, tel.rot_scale = scale, rscale
             tel.disengage()
         mt["controller"] = "hand" if by_hand else "phone"
         if self.wire is not None and self._wire_tick(mt, dt):

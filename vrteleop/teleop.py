@@ -49,6 +49,7 @@ class ArmTeleop:
 
     def __init__(self, pos_scale: float = 1.0, z_min: float | None = None):
         self.pos_scale = pos_scale
+        self.rot_scale = 1.0    # the gripper turns this much of the controller's turn (0.5: half as far)
         # lowest allowed EE target height (task dependent: cloth needs the fingertips on the table)
         self.ws_lo = WORKSPACE_LO.copy()
         if z_min is not None:
@@ -107,6 +108,15 @@ class ArmTeleop:
             dpos = (c_pos - self._c0_pos) * self.pos_scale
             self.target_pos = np.clip(self._e0_pos + dpos, self.ws_lo, WORKSPACE_HI)
             drot = quat_mul(c_quat, quat_conj(self._c0_quat))   # world-frame delta
+            if self.rot_scale != 1.0:                            # (the same axis, a fraction of the angle)
+                rv = np.zeros(3)
+                mujoco.mju_quat2Vel(rv, drot if drot[0] >= 0 else -drot, 1.0)
+                drot = np.zeros(4)
+                ang = float(np.linalg.norm(rv))
+                if ang > 1e-9:
+                    mujoco.mju_axisAngle2Quat(drot, rv / ang, ang * self.rot_scale)
+                else:
+                    drot[0] = 1.0
             self.target_quat = quat_normalize(quat_mul(drot, self._e0_quat))
 
     def _is_glitch(self, c_pos, c_quat, t) -> bool:
