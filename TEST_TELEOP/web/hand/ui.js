@@ -33,6 +33,14 @@ export function drawHand(canvas, video, state, { mirror = true, dim = 0.25 } = {
       ctx.shadowBlur = 0;
       ctx.fillStyle = '#fff';
       for (const p of lm) { const [x, y] = map(p); ctx.beginPath(); ctx.arc(x, y, Math.max(2, w / 220), 0, 7); ctx.fill(); }
+      if (state.axes) {                                    // the hand's 3D orientation: its three axes
+        const [ox, oy] = map(state.axes.o);
+        ['#ff6b6b', '#5ee08f', '#6fa8ff'].forEach((c, j) => {
+          const [x, y] = map(state.axes.axes[j]);
+          ctx.strokeStyle = c; ctx.lineWidth = Math.max(2, w / 200);
+          ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(x, y); ctx.stroke();
+        });
+      }
       if (state.gesture === 'pinch') {                      // a ring at the pinch
         const [x1, y1] = map(lm[4]), [x2, y2] = map(lm[8]);
         ctx.strokeStyle = COLORS.pinch; ctx.lineWidth = 3;

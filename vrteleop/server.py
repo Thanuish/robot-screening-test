@@ -516,6 +516,12 @@ def make_app(sim: TeleopSim) -> web.Application:
                     sim.input_count += 1
                 elif t == "ping":             # a client measuring its round-trip time
                     await ws.send_str(json.dumps({"type": "pong", "t": data.get("t")}))
+                elif t == "track_log":        # a hand-tracking page's raw points (for tuning)
+                    frames = data.get("frames")
+                    if isinstance(frames, list) and len(msg.data) < 2_000_000:
+                        with open(Path(sim.session.dir) / "hand_tracking.jsonl", "a", encoding="utf-8") as fh:
+                            for fr in frames:
+                                fh.write(json.dumps(fr, separators=(",", ":")) + "\n")
                 elif t == "view":             # a monitor page's camera heading (MuJoCo frame)
                     try:
                         sim.view_yaw = float(data.get("yaw", 0.0))

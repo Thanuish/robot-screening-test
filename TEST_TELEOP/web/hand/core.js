@@ -6,10 +6,12 @@
 //
 //   open hand   drives the robot (the clutch is held): the gripper follows the hand's motion
 //   twist       the hand turned like a doorknob (palm still toward the camera) turns the gripper
-//               left / right: measured in the flat image, where it is steady (the palm's 3D
-//               direction wobbles by degrees and a tilted palm is lost by the tracker)
-//   tilt keys   in tasks with full rotation: setTilt() (the computer's W/S and A/D) tilts the
-//               gripper forward/back and sideways; the hand itself never has to tilt
+//               left / right: measured in the flat image, where it is steady
+//   tilt        in tasks with full rotation the hand's whole orientation counts (pose3d.js: the
+//               palm's rigid points fitted in 3D and in the image, the forearm from MediaPipe Pose
+//               when the palm turns edge-on): fingertips toward / away from the screen tilt the
+//               gripper forward / back, the palm turned left / right tilts it sideways, the twist
+//               still turns it. setTilt() (W/S, A/D) adds to that from the keyboard
 //   fist        pauses: move the hand without moving the robot (like lifting a mouse), open again
 //   pinch       (thumb and index finger together) closes the gripper; open the pinch to let go
 //               (gripMode 'pinch'); with gripMode 'key' a key toggles the gripper instead
@@ -20,6 +22,9 @@
 // x forward (into the screen), y left, z up.
 export const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21';
 export const MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+// MediaPipe Pose (the light model): the elbow and wrist, for the forearm's direction
+export const POSE_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+import { solveHandPose, PalmModel, PALM_IDS, forearm, ForearmFusion, OneEuroRot, BacklashRot } from './pose3d.js';
 
 export const SETTINGS = {
   hfov: 60,                    // [deg] the camera's field of view, a guess (an error only scales the motion a little)
@@ -41,7 +46,20 @@ export const SETTINGS = {
   // the filters would carry that change into the robot; at that moment they start afresh
   settleFrames: 12,
   maxFrame: 640,               // frames are scaled to this long side for the tracker (faster, same result)
+  // the hand's full orientation (tasks with full rotation): its filter and dead band
+  rot3d: { minCutoff: 0.3, beta: 0.5, dCutoff: 1.0 },
+  deadRot3d: 2.5,              // [deg]
+  forearm: true,               // track the forearm too (MediaPipe Pose, a second model: a little slower)
+  poseEvery: 2,                // run it on every n-th frame (the forearm moves slowly)
+  // closing or opening a pinch bends the palm a little (its arch): the pose is held this many
+  // frames, then taken up again from where the hand is (OAT's grasp stabilization)
+  gripHoldFrames: 8,
+  logEvery: 2.0,               // [s] with opts.log: the raw tracking (points only) sent this often
 };
+// the hand's frame (the camera's, palm toward it) -> the gripper's (pointing down): the palm's
+// normal toward the camera is the gripper's down, the fingers (up) its forward. So the doorknob
+// twist turns the gripper about the vertical, as in the tasks with only that turn
+const HAND_TO_MJ = [[0, -1, 0], [1, 0, 0], [0, 0, 1]];
 
 // ------------------------------------------------------------ small math
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -169,7 +187,7 @@ export function preload() {
     };
     worker.onerror = (e) => reject(new Error(e.message || 'the hand tracker could not start'));
   });
-  worker.postMessage({ type: 'init', mp: MP, model: MODEL });
+  worker.postMessage({ type: 'init', mp: MP, model: MODEL, poseModel: SETTINGS.forearm ? POSE_MODEL : null });
   return s.ready;
 }
 
@@ -202,6 +220,17 @@ export class HandControl {
     this.bPos = new Backlash(SETTINGS.deadPos);
     this.bRot = new BacklashQuat(SETTINGS.deadRot);
     this.frames = [];
+    // the full 3D pose (pose3d.js)
+    this.palm = new PalmModel();                   // this person's palm, learned while it faces the camera
+    this.sol = null;                               // the last frame's solution
+    this.fusion = new ForearmFusion();
+    this.fRot3 = new OneEuroRot(SETTINGS.rot3d);
+    this.bRot3 = new BacklashRot(SETTINGS.deadRot3d);
+    this.lastPose = null;
+    this.holdFrames = 0;                           // grip changes: frames the pose is still held
+    this.frameNo = 0;
+    this.log = [];
+    this.lastLog = null;
   }
 
   async start(video) {
@@ -219,7 +248,8 @@ export class HandControl {
       const k = Math.min(1, SETTINGS.maxFrame / Math.max(video.videoWidth, video.videoHeight));
       const w = Math.round(video.videoWidth * k), h = Math.round(video.videoHeight * k);
       const t = performance.now();
-      const send = (bmp) => shared.worker.postMessage({ type: 'frame', bitmap: bmp, t }, [bmp]);
+      const pose = SETTINGS.forearm && (this.frameNo++ % SETTINGS.poseEvery === 0);
+      const send = (bmp) => shared.worker.postMessage({ type: 'frame', bitmap: bmp, t, pose }, [bmp]);
       createImageBitmap(video, { resizeWidth: w, resizeHeight: h, resizeQuality: 'low' }).then(send).catch(() => {
         canvas.width = w; canvas.height = h;                 // (older browsers: through a canvas)
         canvas.getContext('2d').drawImage(video, 0, 0, w, h);
@@ -249,6 +279,13 @@ export class HandControl {
       const f = 0.5 / Math.tan((SETTINGS.hfov / 2) * Math.PI / 180);
       const hp = handPose(m.lm, m.wl, W, H, f);
       state.tracked = true;
+      if (m.pose) this.pose = m.pose;                 // (the forearm: from the last frame it ran on)
+      // the full 3D pose; a bad solution (a confused tracker) is dropped and the last one kept
+      let sol = null;
+      try { sol = solveHandPose(m.lm, m.wl, W, H, f, this.palm, this.sol); } catch (e) { sol = null; }
+      if (sol && (!(sol.t[2] > 0.12 && sol.t[2] < 2.5) || !(sol.err < 25))) sol = null;
+      if (sol) this.sol = sol;
+      else if (this.sol) sol = this.sol;
       // gestures (hysteresis): a fist (the index folded in too) pauses; a pinch grips and keeps
       // driving (in a pinch the index bends toward the thumb and the others may curl: no fist)
       // (the index folded into the palm decides: then it is a fist whatever the thumb does)
@@ -257,6 +294,14 @@ export class HandControl {
         this.pinched = this.pinched ? hp.pinch < SETTINGS.pinchOff : hp.pinch < SETTINGS.pinchOn;
       state.gesture = this.fist ? 'fist' : this.pinched ? 'pinch' : 'open';
       state.gripping = this.pinched;
+      // learn the palm (open hand only: a fist or a pinch bends it)
+      if (sol && state.gesture === 'open') {
+        const img = PALM_IDS.map(i => [(m.lm[i].x - 0.5) / f * sol.t[2], (m.lm[i].y - 0.5) * (H / W) / f * sol.t[2], 0]);
+        this.palm.add(m.wl, img, sol.facing);
+      }
+      // a grip change: hold the pose a moment, then take it up again from the hand (a new epoch)
+      if (this.pinched !== this.wasPinched && this.wasPinched !== undefined) this.holdFrames = SETTINGS.gripHoldFrames;
+      this.wasPinched = this.pinched;
       // settle (see SETTINGS.settleFrames): then the filters restart from the hand's pose now and
       // the clutch anchors there (a new epoch), so opening the hand can't move the robot
       this.openFrames = this.fist ? 0 : (this.openFrames || 0) + 1;
@@ -273,9 +318,15 @@ export class HandControl {
       // reference distance (the per-frame distance, from the palm's size, is the noisiest number:
       // scaling by it shook the sideways motion too); forward/back from the distance, filtered
       // on its own; then the dead band (a still hand: no motion at all)
-      const D = this.fDepth.filter([hp.D], t)[0];
-      const Dref = this.fRef.filter([hp.D], t)[0];
-      const camPos = this.fPos.filter([hp.pos[0] * Dref / hp.D, hp.pos[1] * Dref / hp.D, D], t);
+      // (from the 3D solution: the distance from the palm's size *at its tilt*, so tilting the palm
+      // doesn't read as moving it away; the point is the wrist, which the hand turns about, so
+      // turning the hand doesn't move the gripper)
+      const pt = sol ? sol.wrist : null;
+      const Draw = pt ? pt[2] : hp.D;
+      const dirX = pt ? pt[0] / pt[2] : hp.pos[0] / hp.D, dirY = pt ? pt[1] / pt[2] : hp.pos[1] / hp.D;
+      const D = this.fDepth.filter([Draw], t)[0];
+      const Dref = this.fRef.filter([Draw], t)[0];
+      const camPos = this.fPos.filter([dirX * Dref, dirY * Dref, D], t);
       const held = this.bPos.filter(camPos);
       state.depth = D;
       // the twist: the angle of the wrist -> middle knuckle line in the image (0 = fingers up).
@@ -300,29 +351,49 @@ export class HandControl {
       const mj = [cv * mj0[0] - sv * mj0[1], sv * mj0[0] + cv * mj0[1], mj0[2]];
       const yaw = this.twist + vy;
       let q;
-      if (rotation === 'full') {
+      // the forearm (when Pose found it) and the hand's rotation, fused; filtered, dead band
+      const fa = sol && this.pose ? forearm(this.pose, m.lm[0], W, H, f, sol.t[2]) : null;
+      state.forearm = fa ? { conf: fa.conf, weight: this.fusion.weight } : null;
+      let Rh = null;
+      if (sol) {
+        Rh = this.fusion.update(sol.R, sol.facing, fa, dt || 1 / 30);
+        if (this.openFrames === 1) { this.fRot3.reset(); this.bRot3.reset(); }
+        Rh = this.bRot3.filter(this.fRot3.filter(Rh, t));
+        state.axes = projectAxes(Rh, sol.centre, W, H, f);
+        state.facing = sol.facing;
+      }
+      if (rotation === 'full' && Rh) {
         const r = SETTINGS.tiltRate * Math.PI / 180 * dt;
         this.pitch += this.tilt.pitch * r;
         this.roll += this.tilt.roll * r;
-        const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+        const cv2 = Math.cos(vy), sv2 = Math.sin(vy), cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
         const cr = Math.cos(this.roll), sr = Math.sin(this.roll);
-        // turn about the vertical, then tilt forward/back (about the robot's left axis) and
-        // sideways (about its forward axis), in the room's frame: R = Rz(yaw) Ry(pitch) Rx(roll)
-        const Rz = [[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]];
+        // the hand's orientation in the robot's frame (the screen's heading turned in), then the
+        // keys' extra tilt forward/back (about the robot's left axis) and sideways (its forward axis)
+        const Rz = [[cv2, -sv2, 0], [sv2, cv2, 0], [0, 0, 1]];
         const Ry = [[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]];
         const Rx = [[1, 0, 0], [0, cr, -sr], [0, sr, cr]];
-        q = matToQuat(mulMM(Rz, mulMM(Ry, Rx)));
+        const Rmj = mulMM(HAND_TO_MJ, mulMM(Rh, transpose(HAND_TO_MJ)));
+        q = matToQuat(mulMM(Rz, mulMM(Ry, mulMM(Rx, Rmj))));
       } else {
         this.pitch = 0; this.roll = 0;
         q = [Math.cos(yaw / 2), 0, 0, Math.sin(yaw / 2)];
       }
       pose = [...mj, ...q];
+      if (this.holdFrames > 0 && this.lastPose) {
+        pose = this.lastPose;
+        if (--this.holdFrames === 0) this.epoch++;     // (taken up again from here: no jump)
+      }
+      this.lastPose = pose;
       state.driving = this.armed && settled;
     } else {
       this.fist = false;
       this.openFrames = 0;                            // (a lost hand settles again when it is back)
       this.wasSettled = false;
+      this.sol = null;
+      this.fusion.reset();
     }
+    this._log(m, state, t);
     this.opts.onFrame?.(state);
     if (!this.armed) return;
     const side = st.task_game?.arm || 'right';
@@ -330,6 +401,31 @@ export class HandControl {
     this.opts.send({ type: 'input', t, head: null, left: null, right: null, [side]: right, tracker: 'hand' });
   }
 }
+
+/** The hand's axes drawn on the camera picture (image 0..1): fingers, across, out of the palm. */
+function projectAxes(R, c, W, H, f) {
+  const p = (X) => ({ x: 0.5 + f * X[0] / X[2], y: (0.5 * H / W + f * X[1] / X[2]) * W / H });
+  const L = 0.06;
+  return { o: p(c), axes: [0, 1, 2].map(j => p([c[0] + R[0][j] * L, c[1] + R[1][j] * L, c[2] + R[2][j] * L])) };
+}
+const transpose = (M) => [[M[0][0], M[1][0], M[2][0]], [M[0][1], M[1][1], M[2][1]], [M[0][2], M[1][2], M[2][2]]];
+const r4 = (v) => Math.round(v * 1e4) / 1e4;
+
+HandControl.prototype._log = function (m, state, t) {
+  // the raw tracking (points, no picture), for tuning: opts.log(frames) every SETTINGS.logEvery s
+  if (!this.opts.log) return;
+  const pose = m.pose ? [13, 14, 15, 16].map(i => m.pose.lm[i] ? [r4(m.pose.lm[i].x), r4(m.pose.lm[i].y), r4(m.pose.lm[i].visibility ?? 0),
+    r4(m.pose.wl[i].x), r4(m.pose.wl[i].y), r4(m.pose.wl[i].z)] : null) : null;
+  this.log.push({ t: r4(t), lat: state.latency, g: state.gesture, d: state.driving ? 1 : 0,
+                  lm: m.lm ? m.lm.map(p => [r4(p.x), r4(p.y)]) : null, wl: m.wl ? m.wl.map(p => [r4(p.x), r4(p.y), r4(p.z)]) : null,
+                  pose, W: this.video.videoWidth, H: this.video.videoHeight });
+  if (this.lastLog === null) this.lastLog = t;
+  if (t - this.lastLog >= SETTINGS.logEvery) {
+    this.opts.log(this.log);
+    this.log = [];
+    this.lastLog = t;
+  }
+};
 
 function quatToMat([w, x, y, z]) {
   return [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],

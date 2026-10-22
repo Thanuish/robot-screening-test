@@ -50,6 +50,7 @@ async function startCamera() {
     await tracker;
     hand = new HandControl({
       send, status: () => status,
+      log: (frames) => send({ type: 'track_log', frames }),   // (the raw points, for tuning)
       onFrame: (st) => {
         state = st;
         checklist.update(true, st);

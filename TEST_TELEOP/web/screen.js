@@ -207,6 +207,7 @@ $('camBtn').addEventListener('click', async () => {
       send: (m) => window.__teleop?.send?.(m),
       status: () => lastStatus,
       gripMode: 'pinch',
+      log: (frames) => window.__teleop?.send?.({ type: 'track_log', frames }),   // (the raw points, for tuning)
       onFrame: (st) => {
         handState = st;
         checklist.update(true, st);
