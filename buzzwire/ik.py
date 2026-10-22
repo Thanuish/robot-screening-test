@@ -22,8 +22,11 @@ from __future__ import annotations
 
 import mujoco
 import numpy as np
-import pinocchio as pin
-import proxsuite
+try:
+    import pinocchio as pin
+    import proxsuite
+except ImportError:            # (no Windows packages: ik_mujoco.py, the same IK on MuJoCo + daqp)
+    pin = proxsuite = None
 
 from .config import TABLE_Z
 from .scene import ARM, GRIP, UR5E_XML, Scene
@@ -185,3 +188,7 @@ class IK:
                 break
             q = np.clip(q + dq, self.lo, self.hi)            # (exactly within the limits: the next box holds 0)
         return q
+
+
+if pin is None:                                            # noqa: E305
+    from .ik_mujoco import IK  # noqa: F401,F811,E402
