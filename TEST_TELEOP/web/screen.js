@@ -171,13 +171,19 @@ const checklist = new Checklist($('checklist'), () => {
   hand.arm(true);                                         // (now the hand drives: the test goes on)
   $('handBox').classList.remove('hidden');
 }, { gripText: 'Press <b>SPACE</b>: the gripper <b>closes</b> 🤏 (press it again to open, then open your hand)' });
-// SPACE toggles the gripper (press: closed, press again: open); the hand only drives and pauses
+// SPACE toggles the gripper (press: closed, press again: open); W/S and A/D tilt the gripper in
+// tasks with full rotation (the hand moves and twists; it never has to tilt)
+const tiltKeys = { KeyW: 0, KeyS: 0, KeyA: 0, KeyD: 0 };
+function updateTilt() { hand?.setTilt(tiltKeys.KeyW - tiltKeys.KeyS, tiltKeys.KeyD - tiltKeys.KeyA); }
 window.addEventListener('keydown', (e) => {
+  if (e.code in tiltKeys) { tiltKeys[e.code] = 1; updateTilt(); return; }
   if (e.code !== 'Space') return;
   e.preventDefault();
   if (e.repeat || !hand) return;
   hand.toggleGrip();
 });
+window.addEventListener('keyup', (e) => { if (e.code in tiltKeys) { tiltKeys[e.code] = 0; updateTilt(); } });
+window.addEventListener('blur', () => { for (const k in tiltKeys) tiltKeys[k] = 0; updateTilt(); });
 function setChip(el, state) {
   const g = state?.gesture || 'none';
   const label = !state?.tracked ? 'NO HAND' : (g === 'open' && !state.driving ? 'READY' : LABELS[g]);

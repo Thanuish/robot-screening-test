@@ -5,7 +5,11 @@
 // phone (so the server, the arm and the tasks don't change).
 //
 //   open hand   drives the robot (the clutch is held): the gripper follows the hand's motion
-//               and turns (in tasks with full rotation it also tilts)
+//   twist       the hand turned like a doorknob (palm still toward the camera) turns the gripper
+//               left / right: measured in the flat image, where it is steady (the palm's 3D
+//               direction wobbles by degrees and a tilted palm is lost by the tracker)
+//   tilt keys   in tasks with full rotation: setTilt() (the computer's W/S and A/D) tilts the
+//               gripper forward/back and sideways; the hand itself never has to tilt
 //   fist        pauses: move the hand without moving the robot (like lifting a mouse), open again
 //   pinch       (thumb and index finger together) closes the gripper; open the pinch to let go
 //               (gripMode 'pinch'); with gripMode 'key' a key toggles the gripper instead
@@ -30,6 +34,8 @@ export const SETTINGS = {
   // follows from the band's edge (smoothly, no jump)
   deadPos: [0.003, 0.003, 0.012],   // [m] camera x (left/right), y (up/down), z (toward/away: the noisiest)
   deadRot: 2.0,                // [deg]
+  twist: { minCutoff: 0.6, beta: 0.6, dCutoff: 1.0 },   // the doorknob turn (per rad/s)
+  tiltRate: 60,                // [deg/s] how fast the tilt keys tilt the gripper
   maxFrame: 640,               // frames are scaled to this long side for the tracker (faster, same result)
 };
 
@@ -183,6 +189,12 @@ export class HandControl {
     this.fDepth = new OneEuro(SETTINGS.depth);
     this.fRot = new OneEuro(SETTINGS.rot);
     this.fRef = new OneEuro(SETTINGS.refDepth);
+    this.fTwist = new OneEuro(SETTINGS.twist);
+    this.twist = null;                            // the doorknob turn [rad] (unwrapped, then held in a dead band)
+    this.twistRaw = null;
+    this.pitch = 0; this.roll = 0;                // from the tilt keys [rad]
+    this.tilt = { pitch: 0, roll: 0 };            // the keys held: -1, 0, +1
+    this.lastT = null;
     this.bPos = new Backlash(SETTINGS.deadPos);
     this.bRot = new BacklashQuat(SETTINGS.deadRot);
     this.frames = [];
@@ -214,6 +226,8 @@ export class HandControl {
   }
 
   stop() { this.running = false; if (shared) shared.onResult = null; }
+  /** the tilt keys held now: pitch +1 forward / -1 back, roll +1 right / -1 left */
+  setTilt(pitch, roll) { this.tilt = { pitch, roll }; }
   /** gripMode 'key': close the gripper if open, open it if closed */
   toggleGrip() { this.pinched = !this.pinched; return this.pinched; }
   arm(on) { this.armed = on; this.epoch++; }
@@ -248,13 +262,19 @@ export class HandControl {
       const camPos = this.fPos.filter([hp.pos[0] * Dref / hp.D, hp.pos[1] * Dref / hp.D, D], t);
       const held = this.bPos.filter(camPos);
       state.depth = D;
-      // orientation: the hand's frame in MuJoCo axes, smoothed as a quaternion
-      const Rmj = mulMM(CAM_TO_MJ, hp.R);
-      let q = matToQuat(Rmj);
-      if (this.fRot.x && q[0] * this.fRot.x[0] + q[1] * this.fRot.x[1] + q[2] * this.fRot.x[2] + q[3] * this.fRot.x[3] < 0) q = q.map(x => -x);
-      q = this.fRot.filter(q, t, (d) => 2 * Math.hypot(d[1], d[2], d[3]));
-      const qn = Math.hypot(...q);
-      q = this.bRot.filter(q.map(x => x / qn));
+      // the twist: the angle of the wrist -> middle knuckle line in the image (0 = fingers up).
+      // In the camera's image the person's clockwise turn goes the other way, so this angle is
+      // already the robot's turn: clockwise (seen from behind the hand) = clockwise from above
+      const ang = Math.atan2((m.lm[9].x - m.lm[0].x) * W, -(m.lm[9].y - m.lm[0].y) * H);
+      if (this.twistRaw === null) this.twistRaw = ang;
+      this.twistRaw += Math.atan2(Math.sin(ang - this.twistRaw), Math.cos(ang - this.twistRaw));   // (unwrapped)
+      const tw = this.fTwist.filter([this.twistRaw], t)[0];
+      const band = SETTINGS.deadRot * Math.PI / 180;
+      if (this.twist === null) this.twist = tw;
+      else if (Math.abs(tw - this.twist) > band) this.twist = tw - Math.sign(tw - this.twist) * band;
+      // the tilt keys (only in tasks with full rotation)
+      const dt = this.lastT === null ? 0 : Math.min(0.1, t - this.lastT);
+      this.lastT = t;
       const vy = st.view_yaw ?? 0;
       if (Math.abs(vy - this.lastVY) > 0.005) { this.lastVY = vy; this.epoch++; }
       const rotation = st.task_game?.rotation || 'yaw';
@@ -262,16 +282,23 @@ export class HandControl {
       const mj0 = mulMV(CAM_TO_MJ, held);
       const cv = Math.cos(vy), sv = Math.sin(vy);
       const mj = [cv * mj0[0] - sv * mj0[1], sv * mj0[0] + cv * mj0[1], mj0[2]];
-      const zr = [[cv, -sv, 0], [sv, cv, 0], [0, 0, 1]];
+      const yaw = this.twist + vy;
+      let q;
       if (rotation === 'full') {
-        q = matToQuat(mulMM(zr, quatToMat(q)));
+        const r = SETTINGS.tiltRate * Math.PI / 180 * dt;
+        this.pitch += this.tilt.pitch * r;
+        this.roll += this.tilt.roll * r;
+        const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+        const cr = Math.cos(this.roll), sr = Math.sin(this.roll);
+        // turn about the vertical, then tilt forward/back (about the robot's left axis) and
+        // sideways (about its forward axis), in the room's frame: R = Rz(yaw) Ry(pitch) Rx(roll)
+        const Rz = [[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]];
+        const Ry = [[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]];
+        const Rx = [[1, 0, 0], [0, cr, -sr], [0, sr, cr]];
+        q = matToQuat(mulMM(Rz, mulMM(Ry, Rx)));
       } else {
-        // heading only (about the vertical): where the palm faces, or (hand flat) the fingers
-        const R = quatToMat(q);
-        const nm = [R[0][2], R[1][2], R[2][2]], am = [R[0][0], R[1][0], R[2][0]];
-        const hv = Math.hypot(nm[0], nm[1]) > 0.35 ? nm : am;
-        const h = (Math.atan2(hv[1], hv[0]) + vy) / 2;
-        q = [Math.cos(h), 0, 0, Math.sin(h)];
+        this.pitch = 0; this.roll = 0;
+        q = [Math.cos(yaw / 2), 0, 0, Math.sin(yaw / 2)];
       }
       pose = [...mj, ...q];
       state.driving = this.armed && !this.fist;
