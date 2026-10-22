@@ -741,7 +741,15 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-loadScene().then(connect).catch(err => {
-  document.getElementById('loading').textContent = 'Failed to load scene: ' + err;
-  console.error(err);
-});
+// (retried: a page opened while the simulator was still starting would otherwise stay empty)
+(async function start(tries = 0) {
+  try {
+    await loadScene();
+    connect();
+  } catch (err) {
+    console.error(err);
+    document.getElementById('loading').textContent = `Loading the robot… (retrying: ${err.message || err})`;
+    window.dispatchEvent(new CustomEvent('teleop-scene-error', { detail: String(err.message || err) }));
+    setTimeout(() => start(tries + 1), Math.min(10000, 1000 * 2 ** Math.min(tries, 4)));
+  }
+})();

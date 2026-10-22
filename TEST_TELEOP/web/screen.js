@@ -221,7 +221,15 @@ $('phoneCamBtn').addEventListener('click', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyH' && hand?.armed) window.__teleop?.send?.({ type: 'home' });
 });
-window.addEventListener('teleop-status', (ev) => { lastStatus = ev.detail; });
+window.addEventListener('teleop-status', (ev) => {
+  lastStatus = ev.detail;
+  $('robotState').textContent = 'Robot connected';
+  $('robotState').className = 'ok';
+});
+window.addEventListener('teleop-scene-error', (ev) => {
+  $('robotState').textContent = 'Connecting to the robot… (retrying)';
+  $('robotState').className = 'bad';
+});
 
 window.addEventListener('teleop-status', (ev) => {
   const g = ev.detail.task_game;

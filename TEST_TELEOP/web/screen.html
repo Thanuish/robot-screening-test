@@ -75,6 +75,8 @@
 .btn.ghost { background: transparent; border: 1px solid var(--line); box-shadow: none; color: #cdd3df; font-weight: 600; padding: 10px 14px; }
 #trackerState { margin-top: 10px; font-size: 13px; color: #8f97a8; }
 #trackerState.ok { color: #3ee08f; } #trackerState.bad { color: #ff8a80; }
+#robotState { margin-top: 4px; font-size: 13px; color: #8f97a8; }
+#robotState.ok { color: #3ee08f; } #robotState.bad { color: #ffc24a; }
 .legend { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0 4px; }
 .legend span { font-size: 13px; color: #c5cbd7; padding: 6px 10px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid var(--line); }
 #phoneCam { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); color: #aab1c0; font-size: 14px; }
@@ -140,6 +142,7 @@
           <ol id="checklist"></ol>
           <button class="btn" id="camBtn">Start the camera</button>
           <div id="trackerState">Loading the hand tracker…</div>
+          <div id="robotState">Connecting to the robot…</div>
           <div class="legend"><span>✋ open: drive</span><span>✊ fist: pause</span><span>🤏 pinch: grip</span></div>
           <div id="phoneCam">No webcam? Use <b>any phone</b> as the camera: stand it up in front of you, screen toward you, and
             <a href="#" id="phoneCamBtn" style="color:#9bd8ff">show its QR code</a>.
