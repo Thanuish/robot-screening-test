@@ -68,6 +68,7 @@ class ArmTeleop:
         self.engaged = False
         self.target_pos = np.array(ee_pos, float)
         self.target_quat = np.array(ee_quat, float)
+        self.home_quat = self.target_quat.copy()
         self.gripper = 0.0
 
     def update(self, ctrl: dict | None, dt: float = 0.01):
@@ -79,6 +80,19 @@ class ArmTeleop:
         """
         if ctrl is None or ctrl.get("pose") is None:
             self.engaged = False
+            return
+        if ctrl.get("abs"):
+            # Absolute (a camera-tracked hand mapped from a calibrated home, like TeleBench): the
+            # pose's position *is* the gripper's target, the gripper keeps its start orientation;
+            # no clutch. (A jump, e.g. the hand found again, is smoothed by the arm's speed limit.)
+            self.engaged = True
+            self.target_pos = np.clip(np.asarray(ctrl["pose"][:3], float), self.ws_lo, WORKSPACE_HI)
+            self.target_quat = self.home_quat.copy()
+            stick = ctrl.get("stick") or [0.0, 0.0]
+            sy = float(stick[1]) if len(stick) > 1 else 0.0
+            if abs(sy) > self.STICK_DEADZONE:
+                self.gripper = float(np.clip(self.gripper + sy * self.GRIPPER_RATE * dt, 0.0, 1.0))
+            self._last = None
             return
         pose = np.asarray(ctrl["pose"], float)
         c_pos, c_quat = pose[:3], quat_normalize(pose[3:7])

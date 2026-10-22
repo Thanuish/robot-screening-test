@@ -1,0 +1,232 @@
+# =============================================================================================
+#  Screening test, TeleBench style
+# =============================================================================================
+#  Our version of TeleBench (Markov Robotics' hand test for teleoperators): one camera watches
+#  the candidate's hand; after a "home" is set, where the hand is in the picture *is* where the
+#  gripper is over the table (its size in the picture is how far forward). Pinch to grip. No
+#  turning. Four tasks, three trials each; every trial starts with a held pinch and is scored
+#  100 x min(1, t_ref / time), minus hidden penalties for hard bumps and resets (0 if not done).
+#  A 0.2 s delay is added to every move (real teleoperation has one); nobody is told.
+#
+#  Same format as screening.toml (see there for every setting). Check it with
+#      python -m TEST_TELEOP.check_config config/telebench.toml
+#  Units: metres, degrees, seconds, kilograms. Positions [x forward, y left] on the table.
+# =============================================================================================
+
+version = 1
+
+[arm]
+model = "ur5e"
+side = "right"
+base = [0.0, -0.36]
+home_deg = [0.7448, -92.3608, 111.956, -109.5495, -90.0002, 0.7448]
+min_height = 0.005             # the pinch point may go down to 5 mm above the table (a ring lying flat)
+max_speed = 0.6                # [m/s] the gripper catches up with the hand at most this fast
+max_turn_deg = 90
+servo_stiffness = 1.0
+mount = "floating"             # a gripper on its own (no arm): it goes where the hand says
+
+[controls]
+hand_mode = "absolute"         # the hand's place from a calibrated home is the gripper's place
+home_centre = [0.56, -0.10]    # [x, y] over the table where the gripper is when the hand is at home
+home_height = 0.20             # ... and how high above the table
+hand_gains = [1.7, 1.55, 0.85] # gripper metres per: picture width moved sideways, picture height moved up,
+                               # and (forward) the log of the hand's size against its size at home
+workspace = [0.30, 0.005, 0.46, 0.22]   # half its width, lowest and highest height, half its depth [m]
+hand_lag_s = 0.2               # added delay on every move (TeleBench's; not shown to the candidate)
+hand_smoothing_s = 0.0         # (the hand page filters already: no more here)
+motion_scale = 1.0
+smoothing_s = 0.0
+
+[view]
+eye = [-0.25, -0.05, 1.65]
+look_at = [0.50, -0.10, 0.75]
+fov_deg = 55
+table_grid = 0.10
+
+[side_view]
+enabled = true
+from = "left"
+size = 0.26
+distance = 0.6
+height = 0.08
+fov_deg = 35
+
+[depth_cues]
+enabled = true
+grab_height = 0.04
+color = "#ffd24a"
+grab_color = "#4cd07d"
+
+[reach_target]                 # the reach ghost's glow (the page draws a see-through gripper there too)
+diameter = 0.05
+color = [0.55, 0.8, 1.0, 0.35]
+
+[timing]
+countdown_s = 3.0
+pair_hold_s = 1.0
+
+[tolerances]
+reach = 0.035                  # the gripper this close to a ghost = filled
+rest_speed = 0.03
+rest_height = 0.008
+held_lift = 0.015
+held_distance = 0.08
+
+# Each trial: 100 x min(1, t_ref / time) - bump_penalty x bumps - reset_penalty x resets, at least
+# trial_min when done, 0 when not. A task = the mean of its trials; overall = the mean of the tasks.
+[scoring]
+steps = 60
+time = 20
+grasp = 20
+bump_penalty = 4
+reset_penalty = 8
+trial_min = 5
+bump_speed = 0.6               # [m/s] an object that stops suddenly from faster than this (dropped from ~2 cm, knocked over) = a bump
+pass_mark = 50
+must_complete = []
+
+[texts]
+well_done = "Nice!"
+time_up = "Time!"
+next = "Next:"
+phone_connected = "Camera ready"
+
+[materials.wood]
+color = [0.85, 0.75, 0.65]
+texture = "wood_floor"
+specular = 0.2
+roughness = 0.6
+
+# ---------------------------------------------------------------------------- objects
+[objects.cube]                 # pick & place
+shape = "box"
+size = [0.045, 0.045, 0.045]
+color = [0.95, 0.75, 0.2]
+start = [0.50, -0.26]
+mass = 0.05
+friction = [1.2, 0.01, 0.001]
+
+[objects.ring]                 # peg: lying flat; lift it by its rim and lower it over the peg
+shape = "ring"
+diameter = 0.10
+thickness = 0.02
+segments = 28
+color = [0.86, 0.16, 0.13]
+start = [0.50, -0.30]
+mass = 0.03
+friction = [1.2, 0.02, 0.001]
+
+[objects.block]                # stacking: three blocks, one at a time on the yellow square
+shape = "box"
+count = 3
+size = [0.05, 0.05, 0.05]
+colors = ["#e63946", "#2a9d8f", "#457b9d"]
+start = [0.46, -0.30]
+mass = 0.05
+friction = [1.0, 0.01, 0.001]
+
+# ---------------------------------------------------------------------------- markers
+[markers.square]               # pick & place: drop the cube in here
+kind = "zone"
+pos = [0.62, 0.08]
+size = [0.09, 0.09]
+line = 0.01
+color = [0.15, 0.8, 0.35]
+
+[markers.peg]                  # straight up from the table
+kind = "peg"
+pos = [0.64, 0.06]
+height = 0.0
+tilt_deg = 0
+length = 0.10
+radius = 0.012
+color = [0.86, 0.16, 0.13]
+
+[markers.supply]
+kind = "zone"
+pos = [0.46, -0.30]
+size = [0.08, 0.08]
+line = 0.008
+color = [0.95, 0.75, 0.15]
+
+[markers.base]                 # build the tower on this
+kind = "platform"
+pos = [0.62, 0.06]
+size = [0.10, 0.10, 0.01]
+material = "wood"
+
+# ---------------------------------------------------------------------------- phases
+[[phases]]
+key = "pair"
+kind = "pair"
+title = "Set home"
+text = "Sit back, raise one hand, palm to the camera. Hold it in the circle: that is home. Steer from there; pinch thumb and index finger to grip."
+
+[[phases]]
+key = "reach"
+title = "Reach"
+scored = true
+trials = 3
+time_limit_s = 45
+t_ref_s = 16
+start = "pinch"
+jitter = 0.05
+new_view_deg = 32
+text = "Fill 3 ghosts. Fast and smooth."
+steps = [
+  { type = "reach", target = [0.50, 0.08, 0.18], label = "ghost 1" },
+  { type = "reach", target = [0.66, -0.22, 0.08], label = "ghost 2" },
+  { type = "reach", target = [0.44, -0.30, 0.28], label = "ghost 3" },
+]
+
+[[phases]]
+key = "pick"
+title = "Pick & Place"
+scored = true
+trials = 3
+time_limit_s = 75
+t_ref_s = 22
+start = "pinch"
+jitter = 0.05
+new_view_deg = 32
+text = "Grab the cube. Drop it in the square."
+objects = ["cube"]
+markers = ["square"]
+steps = [{ type = "place_in_zone", object = "cube", zone = "square", label = "cube in the square" }]
+
+[[phases]]
+key = "peg"
+title = "Peg"
+scored = true
+trials = 3
+time_limit_s = 90
+t_ref_s = 30
+start = "pinch"
+jitter = 0.05
+new_view_deg = 32
+text = "Lift the ring by its rim. Hover it over the peg. Then straight down."
+objects = ["ring"]
+markers = ["peg"]
+steps = [{ type = "hang_on", object = "ring", peg = "peg", label = "ring on the peg" }]
+
+[[phases]]
+key = "stack"
+title = "Stacking"
+scored = true
+trials = 3
+time_limit_s = 90
+t_ref_s = 35
+start = "pinch"
+jitter = 0.05
+new_view_deg = 32
+text = "Stack all 3 blocks into one tower on the wooden base."
+objects = ["block"]
+markers = ["supply", "base"]
+steps = [{ type = "stack", objects = "block", platform = "base", supply = "supply", target_height = 0.15 }]
+
+[[phases]]
+key = "done"
+kind = "done"
+title = "All done"
+text = "Thank you! You can close this page."

@@ -83,6 +83,19 @@
 #handBox { position: fixed; left: 18px; bottom: 18px; z-index: 11; width: clamp(300px, 28vw, 480px); background: rgba(18,20,28,.92);
            border: 1px solid var(--line); border-radius: 16px; padding: 8px; box-shadow: 0 14px 40px rgba(0,0,0,.4); }
 #handBox.big { width: clamp(420px, 46vw, 900px); }
+/* ---- trials (absolute control): pips, give up / reset, "pinch to begin" */
+#trialPips { position: fixed; top: 92px; left: 50%; transform: translateX(-50%); z-index: 9; display: flex; gap: 8px; }
+#trialPips span { width: 34px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.22); }
+#trialPips span.done { background: #3ddc84; } #trialPips span.cur { background: #7c5cff; }
+#trialBtns { position: fixed; right: 18px; bottom: 18px; z-index: 11; display: flex; gap: 8px; }
+#trialBtns button { border: 1px solid rgba(255,255,255,.15); background: rgba(18,20,28,.85); color: #cfd5e0;
+                    border-radius: 12px; padding: 9px 14px; font: 600 14px system-ui, sans-serif; cursor: pointer; }
+#goPrompt { position: fixed; left: 50%; top: 46%; transform: translate(-50%, -50%); z-index: 11; text-align: center;
+            background: rgba(12,14,20,.82); border: 1px solid rgba(255,255,255,.1); border-radius: 22px; padding: 22px 34px; }
+#goRing { --p: 0%; width: 92px; height: 92px; margin: 0 auto 10px; border-radius: 50%; display: grid; place-items: center;
+          background: conic-gradient(#3ddc84 var(--p), rgba(255,255,255,.12) 0); }
+#goRing span { width: 76px; height: 76px; border-radius: 50%; background: #10131a; display: grid; place-items: center; font-size: 36px; }
+#goText { font: 800 22px system-ui, sans-serif; color: #fff; }
 #handBox canvas { width: 100%; aspect-ratio: 4 / 3; border-radius: 10px; display: block; background: #0b0d13; }
 #handBox .row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; color: #8f97a8; }
 #handBox .keys { margin-top: 6px; font-size: 12px; color: #9aa1b0; }
@@ -126,6 +139,9 @@
     <div><div id="timer"></div><div id="practice"></div></div>
   </div>
   <div id="center"><div id="count"></div></div>
+  <div id="trialPips"></div>
+  <div id="trialBtns" class="hidden"><button id="resetObjects">Reset objects</button><button id="giveUp">Give up</button></div>
+  <div id="goPrompt" class="hidden"><div id="goRing"><span>🤏</span></div><div id="goText">Pinch to begin</div></div>
   <div id="toast" style="opacity:0"></div>
 
   <div id="start">

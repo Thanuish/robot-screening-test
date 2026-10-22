@@ -3,6 +3,9 @@
 // robot. Works on any phone with a camera and a modern browser (no AR, no app).
 import { preload, HandControl, openCamera } from '/test-static/hand/core.js';
 import { drawHand, Checklist, COLORS, LABELS } from '/test-static/hand/ui.js';
+import { AbsoluteHand } from '/test-static/hand/absolute.js';
+// [controls] hand_mode = "absolute" (TeleBench style): home, the hand's place = the gripper's
+const ABS_MODE = window.SCREEN_CONFIG?.hand?.mode === 'absolute';
 const $ = (id) => document.getElementById(id);
 const BASE = window.TELEOP_BASE;
 
@@ -30,7 +33,17 @@ const tracker = preload();
 tracker.catch((e) => { $('msg').textContent = 'The hand tracker could not load: ' + e.message; $('msg').className = 'bad'; });
 
 let cam = null, hand = null, state = null, facing = 'user';
-const checklist = new Checklist($('checklist'), () => { hand.arm(true); $('homeBtn').classList.remove('hidden'); });
+const checklist = new Checklist($('checklist'), () => { hand.arm(true); $('homeBtn').classList.remove('hidden'); }, ABS_MODE ? {
+  steps: [
+    ['camera', 'Camera on'],
+    ['hand', 'Sit back, raise one hand, palm to the camera'],
+    ['home', 'Hold it in the circle until it fills: that is <b>home</b>'],
+    ['pinch', 'Pinch 🤏 thumb and index finger: that <b>grips</b>'],
+    ['release', 'Open the pinch. Ready!'],
+  ],
+  check: (k, st, camera) => k === 'camera' ? camera : k === 'hand' ? !!st?.tracked : k === 'home' ? !!st?.homeSet
+    : k === 'pinch' ? !!st?.pinch : !!st?.tracked && !st?.pinch,
+} : {});
 function loop() {
   requestAnimationFrame(loop);
   if (!cam) return;
@@ -48,8 +61,9 @@ async function startCamera() {
   $('overlay').classList.add('hidden');
   if (!hand) {
     await tracker;
-    hand = new HandControl({
-      send, status: () => status,
+    const Ctl = ABS_MODE ? AbsoluteHand : HandControl;
+    hand = new Ctl({
+      send, status: () => status, cfg: window.SCREEN_CONFIG?.hand,
       log: (frames) => send({ type: 'track_log', frames }),   // (the raw points, for tuning)
       onFrame: (st) => {
         state = st;
@@ -57,7 +71,12 @@ async function startCamera() {
         const g = st.gesture || 'none';
         const ready = g === 'open' && !st.driving;
         $('chip').style.color = !st.tracked ? COLORS.none : ready ? '#7fb4ff' : COLORS[g];
-        $('chip').querySelector('b').textContent = !st.tracked ? 'NO HAND' : ready ? 'READY' : LABELS[g];
+        $('chip').querySelector('b').textContent = !st.tracked ? 'NO HAND' : ABS_MODE && !st.homeSet ? 'SET HOME'
+          : ready ? 'READY' : ABS_MODE && g === 'open' ? 'STEERING' : LABELS[g];
+        if (ABS_MODE && hand?.armed) {                   // (a trial waiting: pinch to begin)
+          const tg = status.task_game;
+          $('msg').textContent = tg?.ready ? `Pinch to begin… ${Math.round(100 * (st.goHold || 0))}%` : '';
+        }
         $('stats').textContent = `${st.fps} fps · ${st.latency} ms`;
       },
     });
@@ -85,4 +104,7 @@ $('flipBtn').addEventListener('click', async () => {
   hand?.stop();
   try { await startCamera(); } catch (e) { $('msg').textContent = 'Could not switch the camera: ' + (e.message || e); }
 });
-$('homeBtn').addEventListener('click', () => { send({ type: 'home' }); navigator.vibrate?.(20); });
+$('homeBtn').addEventListener('click', () => {
+  if (ABS_MODE) hand?.rehome(); else send({ type: 'home' });     // (absolute: set home again)
+  navigator.vibrate?.(20);
+});

@@ -44,6 +44,7 @@ The overall score is the mean of the scored tasks. Reach steps also measure path
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -113,8 +114,20 @@ def _jsonable(o):
     raise TypeError(f"{type(o).__name__} is not JSON serializable")
 
 
+def trial_score(success: bool, t: float, t_ref: float, bumps: int, resets: int, w: dict) -> float:
+    """One trial (TeleBench's rule): done, 100 x min(1, t_ref / time) minus the penalties, never
+    below trial_min; not done: 0."""
+    if not success:
+        return 0.0
+    s = 100 * min(1.0, t_ref / max(t, 1.0)) - w["bump_penalty"] * bumps - w["reset_penalty"] * resets
+    return round(float(np.clip(s, w["trial_min"], 100)), 1)
+
+
 def score_task(m: dict, limit: float, w: dict) -> float:
     """0..100 for one scored task (see the module docstring); w = the [scoring] weights."""
+    if "trials" in m:                                      # trials: their mean (one not played: 0)
+        n = max(1, m.get("trials_total", len(m["trials"])))
+        return round(sum(tr["score"] for tr in m["trials"]) / n, 1)
     steps = m["steps_done"] / max(1, m["steps_total"])
     time_part = max(0.0, 1 - m["time_s"] / limit) if m["completed"] else 0.0
     if "best_height" in m:                                 # tower: height, few falls, good grasps
@@ -191,10 +204,58 @@ class ScreenGame:
 
     def _setup_phase(self):
         """Place this phase's objects and markers, home the arm, start the countdown."""
+        ph = self.phase
+        self.trial = 0
+        self.ready = False                              # (trials starting with a pinch: waiting for it)
+        self.trial_t0 = None
+        self._setup_layout()
+        self.t0 = None
+        self.intro_until = self.d.time + self.cfg.timing["countdown"] if ph.kind == "task" else None
+        self._glitch0 = self.sim.arms.teleop[self.side].glitches
+        if ph.kind == "task":
+            self.metrics[ph.key] = self._new_metrics(len(ph.steps))
+            if self.wire is not None:
+                self.metrics[ph.key].update(progress=0.0, touches=0, touch_time_s=0.0)
+            if self.stack is not None:
+                self.metrics[ph.key].update(height=0.0, best_height=0.0, falls=0, blocks_used=1,
+                                            target_height=self.stack["step"].target_height)
+                self.metrics[ph.key]["steps_total"] = 1
+            if ph.repeat:
+                self.metrics[ph.key].update(rounds=0, items_done=0, target_items=ph.target_rounds * len(ph.steps))
+            if ph.trials:
+                self.metrics[ph.key].update(trials=[], trials_total=ph.trials, bumps=0, resets=0)
+                self._begin_trial()
+
+    def _layout_offsets(self):
+        """This trial's shifts of the objects and markers: none, except on the last trial of a
+        phase with jitter (a new layout, the same for every candidate)."""
+        ph = self.phase
+        if not ph.trials or not ph.jitter or self.trial != ph.trials - 1:
+            return {}
+        rng = np.random.default_rng(1000 * self.i + self.trial)
+        names = list(ph.objects) + list(ph.markers) + [f"_reach{k}" for k in range(len(ph.steps))]
+        return {n: rng.uniform(-ph.jitter, ph.jitter, 2) for n in names}
+
+    def _setup_layout(self):
+        """The phase's objects and markers in their places (shifted for this trial), the arm home,
+        the steps' state afresh."""
         d, info, ph = self.d, self.info, self.phase
+        if not hasattr(self, "_markers0"):
+            self._markers0 = dict(self.cfg.markers)         # (the config's places: trials shift copies)
+        self.cfg.markers.update(self._markers0)
+        off = self._layout_offsets()
+        for mk in ph.markers:
+            if mk in off:
+                m0 = self._markers0[mk]
+                self.cfg.markers[mk] = dataclasses.replace(m0, pos=(m0.pos[0] + off[mk][0], m0.pos[1] + off[mk][1]))
+        self.layout_off = off
         SS.park_all(info, d)
         for n in ph.objects:
-            SS.place(info, d, n)
+            o = self.cfg.objects[n]
+            if n in off and o.start_in is None:
+                SS.place(info, d, n, (o.start[0] + off[n][0], o.start[1] + off[n][1]), o.yaw)
+            else:
+                SS.place(info, d, n)
         for mk in ph.markers:
             SS.show_marker(info, d, mk)
         # the arm back home, gripper open
@@ -230,19 +291,103 @@ class ScreenGame:
         self._prev_engaged = False
         self._prev_target = None
         self._prev_quat = None
+        self._bump_t = {}
+        self._v_prev = {}
+
+    # ------------------------------------------------------------ trials
+    def _begin_trial(self):
+        """Trial self.trial: the layout afresh, the arm home; then it starts with a pinch held
+        (go(), sent by the hand page) or after the countdown."""
+        ph = self.phase
+        self._setup_layout()
+        mujoco.mj_forward(self.m, self.d)
+        self.trial_bumps = self.trial_resets = 0
+        self.trial_t0 = None
+        mt = self.metrics.get(ph.key)
+        if mt is not None and self.stack is not None:
+            mt.update(height=0.0, best_height=0.0)
         self.t0 = None
-        self.intro_until = d.time + self.cfg.timing["countdown"] if ph.kind == "task" else None
-        self._glitch0 = self.sim.arms.teleop[s].glitches
-        if ph.kind == "task":
-            self.metrics[ph.key] = self._new_metrics(len(ph.steps))
-            if self.wire is not None:
-                self.metrics[ph.key].update(progress=0.0, touches=0, touch_time_s=0.0)
-            if self.stack is not None:
-                self.metrics[ph.key].update(height=0.0, best_height=0.0, falls=0, blocks_used=1,
-                                            target_height=self.stack["step"].target_height)
-                self.metrics[ph.key]["steps_total"] = 1
-            if ph.repeat:
-                self.metrics[ph.key].update(rounds=0, items_done=0, target_items=ph.target_rounds * len(ph.steps))
+        if ph.start == "pinch":
+            self.ready, self.intro_until = True, None
+            self.sim.arms.frozen = {self.side}
+        else:
+            self.ready, self.intro_until = False, self.d.time + self.cfg.timing["countdown"]
+
+    def go(self):
+        """The candidate held the pinch: this trial starts."""
+        if self.phase.kind == "task" and self.ready and not self.finished:
+            self.ready = False
+            self.sim.arms.frozen = set()
+            self._start_phase()
+
+    def give_up(self):
+        if self.phase.kind == "task" and self.phase.trials and self.t0 is not None and not self.ready:
+            self._end_trial(False, gave_up=True)
+
+    def reset_objects(self):
+        """The candidate pressed "Reset objects": this trial's objects back to their places (the
+        clock runs on). Counted as a penalty, never shown."""
+        ph = self.phase
+        if ph.kind != "task" or self.t0 is None or self.ready:
+            return
+        off, d = self.layout_off, self.d
+        for n in ph.objects:
+            o = self.cfg.objects[n]
+            if n in off and o.start_in is None:
+                SS.place(self.info, d, n, (o.start[0] + off[n][0], o.start[1] + off[n][1]), o.yaw)
+            else:
+                SS.place(self.info, d, n)
+        if self.stack is not None:                          # (the tower starts again from the supply)
+            st = self.stack["step"]
+            for n in st.objects:
+                SS.place(self.info, d, n, "park")
+            self.stack.update(queue=list(st.objects), out=[], on_tower=set(), still_since=None)
+            self._next_block()
+        mujoco.mj_forward(self.m, d)
+        self.held = {n: False for n in ph.graspable}
+        self.trial_resets += 1
+        mt = self.metrics[ph.key]
+        mt["resets"] += 1
+        mt.setdefault("events", []).append([round(d.time - self.t0, 2), "reset", self.trial])
+
+    def _end_trial(self, success: bool, gave_up: bool = False):
+        ph, d = self.phase, self.d
+        mt = self.metrics[ph.key]
+        t = d.time - self.t0
+        score = trial_score(success, t, ph.t_ref, self.trial_bumps, self.trial_resets, self.cfg.scoring)
+        mt["trials"].append(dict(trial=self.trial + 1, success=bool(success), gave_up=gave_up, time_s=round(t, 2),
+                                 bumps=self.trial_bumps, resets=self.trial_resets, score=score,
+                                 steps_done=mt.get("steps_done", 0)))
+        mt["time_s"] = round(sum(tr["time_s"] for tr in mt["trials"]), 2)
+        if self.sim.recorder.active:
+            self.sim.save_episode(success=success)
+            mt.setdefault("episodes", []).append(self.sim.last_saved)
+        self.trial += 1
+        if self.trial < ph.trials:
+            tx = self.cfg.texts
+            self.message = tx["well_done"] if success else (tx["time_up"] if not gave_up else "")
+            self._begin_trial()
+            self.write_results()
+        else:
+            self._end_phase(any(tr["success"] for tr in mt["trials"]))
+
+    def _count_bumps(self, mt):
+        """Hard knocks (every control tick): one of this phase's objects, not in the gripper, that
+        stops suddenly from faster than [scoring] bump_speed (dropped from a few cm, knocked over,
+        thrown); one per object per half second."""
+        d, now = self.d, self.d.time
+        lim = self.cfg.scoring["bump_speed"]
+        for n in self.phase.objects:
+            dof = self.dof[n]
+            v = float(np.linalg.norm(d.qvel[dof:dof + 3]))
+            v0 = self._v_prev.get(n, 0.0)
+            self._v_prev[n] = v
+            if v0 - v > 0.5 * lim and v0 > lim and not self.held.get(n, False) \
+                    and now - self._bump_t.get(n, -1.0) > 0.5:
+                self._bump_t[n] = now
+                self.trial_bumps += 1
+                mt["bumps"] += 1
+                mt.setdefault("events", []).append([round(now - self.t0, 2), "bump", n, round(v0, 2)])
 
     def _setup_wire(self, st):
         """Buzz wire: the arm holds the wand, its loop around the start of the wire (on the red
@@ -407,9 +552,15 @@ class ScreenGame:
         self.held = {n: False for n in ph.graspable}
         self.message = f"Round {mt['rounds'] + 1}!"
 
+    def _target(self, k):
+        """Reach target k (shifted with this trial's layout)."""
+        t = np.asarray(self.phase.steps[k].target, float)
+        o = getattr(self, "layout_off", {}).get(f"_reach{k}")
+        return t if o is None else t + [o[0], o[1], 0.0]
+
     def _show_target(self):
         steps = self.phase.steps
-        SS.show_goal(self.info, self.d, steps[self.reach_k].target if self.reach_k < len(steps) else None)
+        SS.show_goal(self.info, self.d, self._target(self.reach_k) if self.reach_k < len(steps) else None)
 
     def _start_phase(self):
         self.t0 = self.d.time
@@ -421,12 +572,14 @@ class ScreenGame:
         mt = self.metrics[key]
         mt["completed"] = completed
         mt["timed_out"] = not completed or self.phase.repeat
-        mt["time_s"] = round(self.d.time - self.t0, 2)
+        if not self.phase.trials:
+            mt["time_s"] = round(self.d.time - self.t0, 2)
         if self.reaching:
             mt["reach_log"] = self.reach_log
         if self.sim.recorder.active:
             self.sim.save_episode(success=completed)
             mt["episode"] = self.sim.last_saved
+        self.sim.arms.frozen = set()
         tx = self.cfg.texts
         self.message = f"{tx['well_done'] if completed else tx['time_up']} {tx['next']} {self.phases[self.i + 1].title}"
         self.i += 1
@@ -452,6 +605,8 @@ class ScreenGame:
                     self.write_results()
             else:
                 self.paired_since = None
+            return
+        if self.ready:                                  # (waiting for the pinch: the arm holds still)
             return
         if self.intro_until is not None:
             # buzz wire: the arm holds still until the start (the loop stays around the wire)
@@ -493,6 +648,8 @@ class ScreenGame:
             self._prev_target = None
             self._prev_quat = None
         self._prev_engaged = tel.engaged
+        if ph.trials:
+            self._count_bumps(mt)
         cmd = self.sim.arms.gripper(self.side)
         if cmd >= 0.5 > self._prev_cmd and self.wire is None:
             mt["grasp_attempts"] += 1
@@ -515,6 +672,12 @@ class ScreenGame:
             if done:
                 self._new_round(mt)
                 done = False
+        if ph.trials:
+            if done:
+                self._end_trial(True)
+            elif elapsed >= ph.limit:
+                self._end_trial(False)
+            return
         if done:
             self._end_phase(True)
         elif elapsed >= ph.limit:
@@ -651,7 +814,7 @@ class ScreenGame:
     # ------------------------------------------------------------ goal checks
     def _check_reach(self, mt):
         steps = self.phase.steps
-        target = steps[self.reach_k].target
+        target = self._target(self.reach_k)
         if np.linalg.norm(self.ee() - target) < self.cfg.tol["reach"]:
             straight = float(np.linalg.norm(np.array(target) - self._reach_from))
             t = self.d.time - self.t0
@@ -746,6 +909,11 @@ class ScreenGame:
                     steps=[dict(label=st.label, done=bool(self.done.get(st.id))) for st in p.steps],
                     phone=self.phone_connected(), finished=self.finished, message=self.message,
                     homing=self.sim.arms.homing(self.side),
+                    trial=(self.trial + 1) if p.trials and p.kind == "task" else None, trials=p.trials,
+                    ready=bool(self.ready), start=p.start if p.kind == "task" else None,
+                    view_turn=p.new_view_deg if p.trials and self.trial == p.trials - 1 else 0.0,
+                    ghost=([round(float(v), 4) for v in self._target(self.reach_k)]
+                           if self.reaching and p.kind == "task" and self.reach_k < len(p.steps) else None),
                     round=(mt.get("rounds", 0) + 1) if p.repeat and p.kind == "task" else None,
                     tower=(dict(height=mt.get("height", 0.0), best=mt.get("best_height", 0.0),
                                 target=mt.get("target_height"), falls=mt.get("falls", 0),

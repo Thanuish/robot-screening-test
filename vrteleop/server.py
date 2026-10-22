@@ -527,6 +527,9 @@ def make_app(sim: TeleopSim) -> web.Application:
                         sim.view_yaw = float(data.get("yaw", 0.0))
                     except (TypeError, ValueError):
                         pass
+                elif t in ("go", "give_up", "reset_objects"):   # a task game's trial: start / give up / objects back
+                    if sim.task_game is not None and hasattr(sim.task_game, t):
+                        getattr(sim.task_game, t)()
                 elif t == "home":             # the arm back to its start pose (a stuck, awkward pose)
                     if sim.task_game is not None and hasattr(sim.task_game, "home"):
                         sim.task_game.home()

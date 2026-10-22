@@ -194,6 +194,9 @@ export function preload() {
   return s.ready;
 }
 
+/** The page's tracker ({worker, busy, onResult}) for another controller (absolute.js). */
+export function sharedTracker() { return shared; }
+
 /** Hand control. opts:
  *    send(msg)      to the simulator (the controller input)
  *    status()       the simulator's last status (arm, view_yaw, task_game.rotation)

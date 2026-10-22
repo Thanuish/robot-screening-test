@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PATH = ROOT / "config" / "screening.toml"
+# the test the lobby runs (SCREEN_CONFIG=config/screening.toml: the earlier, phone / VR-style test)
+DEFAULT_PATH = ROOT / "config" / "telebench.toml"
 
 # the table (part of the room in vrteleop/scene.py): positions must lie on it
 TABLE_X = (-0.15, 0.95)
@@ -141,6 +142,13 @@ class Phase:
     graspable: list = field(default_factory=list)   # objects whose grasps and drops are counted
     repeat: bool = False         # all steps done: a new round (everything back to its start) until time is up
     target_rounds: int = 1       # (repeat) this many rounds score full marks
+    # trials (like TeleBench): the phase is played `trials` times, each with its own time limit
+    # (time_limit_s) and score: 100 x min(1, t_ref / time) minus penalties, 0 if not done
+    trials: int = 0              # 0: one go, scored by [scoring] steps / time / grasp
+    t_ref: float = 30.0          # [s] a trial done this fast (or faster) scores full time marks
+    start: str = "countdown"     # "countdown", or "pinch": each trial starts when the candidate holds a pinch
+    jitter: float = 0.0          # [m] the last trial's objects and markers are moved up to this much
+    new_view_deg: float = 0.0    # the last trial is seen turned this much about the table (a new view)
 
 
 @dataclass
@@ -152,6 +160,7 @@ class Config:
     hand_smoothing: float        # [s] the same for a camera-tracked hand (smoothed on the device already)
     hand_motion_scale: float     # robot motion per hand motion for a camera-tracked hand
     hand_rotation_scale: float   # gripper turn per hand turn for a camera-tracked hand
+    hand: dict                   # [controls] hand_mode etc. (the hand pages read these)
     view: dict                   # eye, look, fov (MuJoCo frame, as main.js wants it)
     depth_cues: dict
     timing: dict
@@ -180,7 +189,9 @@ class Config:
         """What the web pages need (monitor, phone, admin)."""
         return dict(arm=self.arm.side, view=self.view, depth_cues=self.depth_cues, table_z=TABLE_Z,
                     gripper_prefix=FLOAT_PREFIX if self.arm.mount == "floating" else f"{self.arm.side}_gripper_",
-                    phases=[dict(key=p.key, title=p.title, kind=p.kind, scored=p.scored) for p in self.phases],
+                    phases=[dict(key=p.key, title=p.title, kind=p.kind, scored=p.scored, trials=p.trials)
+                            for p in self.phases],
+                    hand=self.hand,
                     pass_mark=self.scoring["pass_mark"], must_complete=self.scoring["must_complete"])
 
 
@@ -371,12 +382,25 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
         c.err("arm.base", f"{arm.base} is off the table")
 
     ctl = raw.get("controls", {})
-    c.keys(ctl, "controls", ("motion_scale", "smoothing_s", "hand_smoothing_s", "hand_motion_scale", "hand_rotation_scale"))
+    c.keys(ctl, "controls", ("motion_scale", "smoothing_s", "hand_smoothing_s", "hand_motion_scale", "hand_rotation_scale",
+                             "hand_mode", "home_centre", "home_height", "hand_gains", "workspace", "hand_lag_s"))
     motion_scale = c.num(ctl, "motion_scale", "controls", 1.5, lo=0.1, hi=10)
     smoothing = c.num(ctl, "smoothing_s", "controls", 0.0, lo=0.0, hi=1.0)
     hand_smoothing = c.num(ctl, "hand_smoothing_s", "controls", 0.06, lo=0.0, hi=1.0)
     hand_motion_scale = c.num(ctl, "hand_motion_scale", "controls", 0.5, lo=0.05, hi=10)
     hand_rotation_scale = c.num(ctl, "hand_rotation_scale", "controls", 0.5, lo=0.05, hi=3)
+    # a camera-tracked hand: "relative" (open hand drives, fist pauses, the clutch) or "absolute"
+    # (TeleBench's: the hand's place in the picture, from a home set at the start, is the gripper's
+    # place over the table; its size in the picture is the depth; no turning)
+    ws = c.vec(ctl, "workspace", "controls", 4, [0.30, 0.012, 0.46, 0.22], lo=0.0)
+    hand = dict(mode=c.text(ctl, "hand_mode", "controls", "relative", ("relative", "absolute")),
+                centre=c.vec(ctl, "home_centre", "controls", 2, [0.56, -0.10]),
+                height=c.num(ctl, "home_height", "controls", 0.20, lo=0.02, hi=0.5),
+                gains=c.vec(ctl, "hand_gains", "controls", 3, [1.7, 1.55, 0.85], lo=0.05),
+                # half the width, lowest and highest height above the table, half the depth [m]
+                workspace=dict(side=ws[0], low=ws[1], high=ws[2], depth=ws[3]),
+                lag=c.num(ctl, "hand_lag_s", "controls", 0.0, lo=0.0, hi=1.0),
+                table_z=TABLE_Z)
 
     # ---- view and depth cues
     v = raw.get("view", {})
@@ -419,13 +443,21 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
     tol["flat_cos"] = math.cos(math.radians(tol.pop("flat_within_deg")))
     tol["upright_cos"] = math.cos(math.radians(tol.pop("upright_within_deg")))
     sc = raw.get("scoring", {})
-    c.keys(sc, "scoring", ("steps", "time", "grasp", "drops_to_zero", "touches_to_zero", "pass_mark", "must_complete"))
+    c.keys(sc, "scoring", ("steps", "time", "grasp", "drops_to_zero", "touches_to_zero", "pass_mark", "must_complete",
+                           "bump_penalty", "reset_penalty", "trial_min", "bump_speed"))
     scoring = dict(steps=c.num(sc, "steps", "scoring", 60, lo=0), time=c.num(sc, "time", "scoring", 20, lo=0),
                    grasp=c.num(sc, "grasp", "scoring", 20, lo=0),
                    drops_to_zero=c.num(sc, "drops_to_zero", "scoring", 3, lo=0, lo_open=True),
                    touches_to_zero=c.num(sc, "touches_to_zero", "scoring", 10, lo=0, lo_open=True),
                    pass_mark=c.num(sc, "pass_mark", "scoring", 50, lo=0, hi=100),
-                   must_complete=sc.get("must_complete", ["reach"]))
+                   must_complete=sc.get("must_complete", ["reach"]),
+                   # (trials) points off per hard bump (an object dropped or knocked that stops
+                   # suddenly from faster than bump_speed [m/s]) and per "reset objects"; a trial done
+                   # never scores below trial_min. Counted, never shown to the candidate
+                   bump_penalty=c.num(sc, "bump_penalty", "scoring", 4, lo=0, hi=100),
+                   reset_penalty=c.num(sc, "reset_penalty", "scoring", 8, lo=0, hi=100),
+                   trial_min=c.num(sc, "trial_min", "scoring", 5, lo=0, hi=100),
+                   bump_speed=c.num(sc, "bump_speed", "scoring", 0.6, lo=0.05, hi=10))
     if not (isinstance(scoring["must_complete"], list) and all(isinstance(x, str) for x in scoring["must_complete"])):
         c.err("scoring.must_complete", "should be a list of phase keys in quotes, e.g. [\"reach\"]")
         scoring["must_complete"] = []
@@ -667,7 +699,8 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
         kind = c.text(ph, "kind", w, "task", ("pair", "task", "done"))
         allowed = ("key", "kind", "title", "text")
         if kind == "task":
-            allowed += ("scored", "time_limit_s", "rotation", "objects", "markers", "steps", "repeat", "target_rounds")
+            allowed += ("scored", "time_limit_s", "rotation", "objects", "markers", "steps", "repeat", "target_rounds",
+                        "trials", "t_ref_s", "start", "jitter", "new_view_deg")
         c.keys(ph, w, allowed, required=("key", "title", "text") + (("time_limit_s", "steps") if kind == "task" else ()))
         key = c.text(ph, "key", w, f"phase{i}")
         if key and not key.replace("_", "").isalnum():
@@ -693,6 +726,13 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
             P.steps = _steps(c, ph.get("steps", []), w, P, objects, groups, markers, arm)
             P.repeat = c.flag(ph, "repeat", w, False)
             P.target_rounds = c.num(ph, "target_rounds", w, 1, lo=1, hi=50, integer=True)
+            P.trials = c.num(ph, "trials", w, 0, lo=0, hi=20, integer=True)
+            P.t_ref = float(c.num(ph, "t_ref_s", w, 30.0, lo=1, hi=3600))
+            P.start = c.text(ph, "start", w, "countdown", ("countdown", "pinch"))
+            P.jitter = float(c.num(ph, "jitter", w, 0.0, lo=0.0, hi=0.2))
+            P.new_view_deg = float(c.num(ph, "new_view_deg", w, 0.0, lo=-180, hi=180))
+            if P.trials and P.repeat:
+                c.err(f"{w}.trials", "a phase has either trials or repeat (rounds), not both")
             if P.repeat and any(st.type in ("reach", "stack", "follow_wire") for st in P.steps):
                 c.err(f"{w}.repeat", "rounds work with placing tasks (not reach, stack or follow_wire steps)")
             # (blocks of a stack step appear one at a time at the supply: they may share a start)
@@ -718,7 +758,7 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
     if c.problems:
         raise ConfigError(p, c.problems)
     return Config(path=Path(p), arm=arm, motion_scale=motion_scale, smoothing=smoothing, hand_smoothing=hand_smoothing, hand_motion_scale=hand_motion_scale,
-                  hand_rotation_scale=hand_rotation_scale,
+                  hand_rotation_scale=hand_rotation_scale, hand=hand,
                   view=view, depth_cues=depth_cues,
                   timing=timing, tol=tol, scoring=scoring, texts=texts, reach_target=reach_target,
                   materials=materials, objects=objects, groups=groups, markers=markers, phases=phases)

@@ -3,6 +3,7 @@
 // webcam watches the candidate's hand; or a phone's camera does, on its own page).
 import { preload, HandControl, openCamera } from '/test-static/hand/core.js';
 import { drawHand, Checklist, COLORS, LABELS } from '/test-static/hand/ui.js';
+import { AbsoluteHand } from '/test-static/hand/absolute.js';
 const $ = (id) => document.getElementById(id);
 const code = window.TELEOP_BASE.split('/').pop();
 
@@ -154,6 +155,44 @@ function drawSideView(renderer, scene) {
 window.addEventListener('teleop-scene', setupViewAids);
 if (window.__teleop) setupViewAids();
 
+// ------------------------------------------------------------ the ghost (reach trials)
+// A see-through copy of the gripper at the target: "fill the ghost". Its parts follow the real
+// gripper's (fingers too), moved by (target - pinch point now).
+let ghost = null, ghostAt = null;
+function makeGhost() {
+  const T = window.__teleop;
+  const grp = new T.THREE.Group();
+  const parts = [];
+  for (const o of T.mjRoot.children) {
+    if (!o.name || !o.name.startsWith(GRIP)) continue;
+    const c = o.clone(true);
+    c.traverse(m => {
+      if (!m.isMesh) return;
+      m.material = new T.THREE.MeshBasicMaterial({ color: 0x9fd4ff, transparent: true, opacity: 0.28, depthWrite: false });
+      m.castShadow = m.receiveShadow = false;
+    });
+    grp.add(c);
+    parts.push([o, c]);
+  }
+  T.mjRoot.add(grp);
+  ghost = { grp, parts };
+}
+function updateGhost() {
+  requestAnimationFrame(updateGhost);
+  const T = window.__teleop;
+  if (!T || !T.body) return;
+  if (!ghostAt) { if (ghost) ghost.grp.visible = false; return; }
+  if (!ghost) makeGhost();
+  const r = T.body(`${GRIP}right_pad`), l = T.body(`${GRIP}left_pad`);
+  if (!r || !l) return;
+  const pinch = r.position.clone().add(l.position).multiplyScalar(0.5);
+  const d = new T.THREE.Vector3(...ghostAt).sub(pinch);
+  for (const [o, c] of ghost.parts) { c.position.copy(o.position).add(d); c.quaternion.copy(o.quaternion); }
+  ghost.grp.visible = true;
+}
+window.addEventListener('teleop-scene', () => { if (ghost) ghost.grp.parent?.remove(ghost.grp); ghost = null; });
+requestAnimationFrame(updateGhost);
+
 let wasHoming = false;
 // ------------------------------------------------------------ hand control
 // The tracker starts loading now (a few seconds the first time), the camera when the candidate
@@ -168,10 +207,21 @@ tracker.then(({ delegate }) => {
   $('trackerState').textContent = 'The hand tracker could not load: ' + e.message + '. Check the internet connection and reload.';
   $('trackerState').className = 'bad';
 });
+const ABS_MODE = CFG.hand?.mode === 'absolute';
 const checklist = new Checklist($('checklist'), () => {
   hand.arm(true);                                         // (now the hand drives: the test goes on)
   $('handBox').classList.remove('hidden');
-});
+}, ABS_MODE ? {
+  steps: [
+    ['camera', 'Camera on'],
+    ['hand', 'Sit back, raise one hand, <b>palm to the camera</b>'],
+    ['home', 'Hold it in the circle until it fills: that is <b>home</b>. Steer from this spot'],
+    ['pinch', 'Pinch 🤏 thumb and index finger: that <b>grips</b>'],
+    ['release', 'Open the pinch: that lets go. Ready!'],
+  ],
+  check: (k, st, camera) => k === 'camera' ? camera : k === 'hand' ? !!st?.tracked : k === 'home' ? !!st?.homeSet
+    : k === 'pinch' ? !!st?.pinch : !!st?.tracked && !st?.pinch,
+} : {});
 // a pinch (thumb and index finger together) closes the gripper while it is held; W/S and A/D tilt
 // the gripper in tasks with full rotation (the hand moves and twists; it never has to tilt)
 const tiltKeys = { KeyW: 0, KeyS: 0, KeyA: 0, KeyD: 0 };
@@ -204,6 +254,12 @@ function adaptRender(st) {
 window.addEventListener('keyup', (e) => { if (e.code in tiltKeys) { tiltKeys[e.code] = 0; updateTilt(); } });
 window.addEventListener('blur', () => { for (const k in tiltKeys) tiltKeys[k] = 0; updateTilt(); });
 function setChip(el, state) {
+  if (ABS_MODE) {
+    const lost = !state?.tracked, home = !state?.homeSet;
+    el.style.color = lost ? '#ff6b6b' : home ? '#7fb4ff' : state.pinch ? COLORS.pinch : state.edge ? '#ffb84d' : COLORS.open;
+    el.querySelector('b').textContent = lost ? 'NO HAND' : home ? 'SET HOME' : state.pinch ? 'GRIPPING' : state.edge ? 'EDGE' : 'STEERING';
+    return;
+  }
   const g = state?.gesture || 'none';
   const label = !state?.tracked ? 'NO HAND' : (g === 'open' && !state.driving ? 'READY' : LABELS[g]);
   el.style.color = !state?.tracked ? COLORS.none : (g === 'open' && !state.driving ? '#7fb4ff' : COLORS[g]);
@@ -227,9 +283,11 @@ $('camBtn').addEventListener('click', async () => {
     $('camOverlay').classList.add('hidden');
     $('startChip').querySelector('b').textContent = 'LOADING';
     await tracker;
-    hand = new HandControl({
+    const Ctl = ABS_MODE ? AbsoluteHand : HandControl;
+    hand = new Ctl({
       send: (m) => window.__teleop?.send?.(m),
       status: () => lastStatus,
+      cfg: CFG.hand,
       gripMode: 'pinch',
       log: (frames) => window.__teleop?.send?.({ type: 'track_log', frames }),   // (the raw points, for tuning)
       onFrame: (st) => {
@@ -239,6 +297,7 @@ $('camBtn').addEventListener('click', async () => {
         setChip($('handChip'), st);
         $('handStats').textContent = st.tracked ? `${st.fps} fps · ${st.latency} ms` : `${st.fps} fps`;
         adaptRender(st);
+        if (ABS_MODE) updateGo(st);
       },
     });
     await hand.start(cam.video);
@@ -256,8 +315,31 @@ $('phoneCamBtn').addEventListener('click', (e) => {
   $('phoneCamQr').classList.toggle('hidden');
 });
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyH' && hand?.armed) window.__teleop?.send?.({ type: 'home' });
+  if (e.code !== 'KeyH' || !hand?.armed) return;
+  if (ABS_MODE) { hand.rehome(); toast('Set home again: hold your hand in the circle'); }
+  else window.__teleop?.send?.({ type: 'home' });
 });
+
+// ------------------------------------------------------------ trials (absolute control)
+// Each trial waits for a pinch held 0.6 s ("Pinch to begin", a ring filling); then the clock
+// runs. "Give up" ends the trial; "Reset objects" puts this trial's objects back (counted).
+function updateGo(st) {
+  const g = lastStatus?.task_game;
+  const on = !!(g && g.ready && !g.finished && hand?.armed);
+  $('goPrompt').classList.toggle('hidden', !on);
+  if (on) {
+    $('goRing').style.setProperty('--p', `${Math.round(100 * (st.goHold || 0))}%`);
+    $('goText').textContent = !st.tracked ? 'Show your hand' : !st.homeSet ? 'Set home first' : 'Pinch to begin';
+  }
+}
+if (ABS_MODE) {                                          // (the help: absolute control's)
+  document.querySelector('#start .legend').innerHTML = '<span>✋ where your hand is = where the gripper is</span>' +
+    '<span>↕ closer / farther = forward / back</span><span>🤏 pinch: grip</span><span>H: set home again</span>';
+  document.querySelector('#handBox .keys').innerHTML = '✋ steer · 🤏 grip · <b>H</b> set home again · <b>C</b> bigger camera';
+}
+$('giveUp')?.addEventListener('click', () => window.__teleop?.send?.({ type: 'give_up' }));
+$('resetObjects')?.addEventListener('click', () => window.__teleop?.send?.({ type: 'reset_objects' }));
+let lastTurn = 0;
 window.addEventListener('teleop-status', (ev) => {
   lastStatus = ev.detail;
   $('robotState').textContent = 'Robot connected';
@@ -271,7 +353,18 @@ window.addEventListener('teleop-scene-error', (ev) => {
 window.addEventListener('teleop-status', (ev) => {
   const g = ev.detail.task_game;
   if (!g) return;
-  $('phaseTitle').textContent = g.round ? `${g.title}  ·  round ${g.round}` : g.title;
+  const tasks = (CFG.phases || []).filter(p => p.kind === 'task'), ti = tasks.findIndex(p => p.key === g.phase);
+  $('phaseTitle').textContent = g.trial ? `Task ${ti + 1}/${tasks.length} · ${g.title}` :
+    g.round ? `${g.title}  ·  round ${g.round}` : g.title;
+  $('trialPips').innerHTML = g.trial ? Array.from({ length: g.trials }, (_, i) =>
+    `<span class="${i + 1 < g.trial ? 'done' : i + 1 === g.trial ? 'cur' : ''}"></span>`).join('') : '';
+  $('trialBtns').classList.toggle('hidden', !(g.trial && !g.ready && g.intro === 0 && !g.finished));
+  ghostAt = g.ghost && !g.ready ? g.ghost : null;
+  if ((g.view_turn || 0) !== lastTurn && window.__teleop?.resetView) {   // (a new view for this trial)
+    window.__teleop.resetView();
+    if (g.view_turn) { window.__teleop.orbitBy(g.view_turn * Math.PI / 180, 0, 1); toast('New view!'); }
+    lastTurn = g.view_turn || 0;
+  }
   $('phaseText').textContent = g.text;
   const pairing = g.kind === 'pair';
   $('start').classList.toggle('hidden', !pairing);
@@ -304,7 +397,10 @@ window.addEventListener('teleop-status', (ev) => {
     $('wireOff').textContent = w.off && g.intro === 0 ? 'The loop is off the wire: bring it back around the wire' : '';
   }
   // timer and countdown
-  if (g.limit) {
+  if (g.limit && g.trial && g.ready) {
+    $('timer').textContent = fmt(g.limit);
+    $('practice').textContent = `trial ${g.trial} of ${g.trials}`;
+  } else if (g.limit) {
     const left = g.intro > 0 ? g.limit : g.limit - g.time;
     $('timer').textContent = fmt(left);
     $('timer').classList.toggle('low', g.intro === 0 && left < 30);

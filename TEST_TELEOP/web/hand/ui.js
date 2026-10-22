@@ -41,14 +41,49 @@ export function drawHand(canvas, video, state, { mirror = true, dim = 0.25 } = {
           ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(x, y); ctx.stroke();
         });
       }
+      if (state.pinchRatio !== undefined) {               // (absolute control) the pinch: a line thumb - index
+        const [x1, y1] = map(lm[4]), [x2, y2] = map(lm[8]);
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, w / 210);
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        for (const [x, y] of [[x1, y1], [x2, y2]]) { ctx.beginPath(); ctx.arc(x, y, w / 80, 0, 7); ctx.stroke(); }
+      }
       if (state.gesture === 'pinch') {                      // a ring at the pinch
         const [x1, y1] = map(lm[4]), [x2, y2] = map(lm[8]);
         ctx.strokeStyle = COLORS.pinch; ctx.lineWidth = 3;
         ctx.beginPath(); ctx.arc((x1 + x2) / 2, (y1 + y2) / 2, w / 28, 0, 7); ctx.stroke();
       }
     }
+    if (state?.home) drawHomePad(ctx, w, h, sx, sy, sw, sh, video, state);
   } else {
     ctx.fillStyle = '#0d1016'; ctx.fillRect(0, 0, w, h);
+  }
+  ctx.restore();
+  if (state?.home?.hint && video && video.videoWidth) {  // (text: not mirrored)
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.fillRect(0, h - h / 7, w, h / 7);
+    ctx.fillStyle = '#fff'; ctx.font = `700 ${Math.round(h / 16)}px system-ui, sans-serif`; ctx.textAlign = 'center';
+    ctx.fillText(state.home.hint, w / 2, h - h / 7 + h / 10);
+  }
+}
+
+/** Setting home (absolute control): the circle the palm is held in, filling while it's held. */
+import { ABS } from './absolute.js';
+function drawHomePad(ctx, w, h, sx, sy, sw, sh, video, state) {
+  const map = (x, y) => [((x * video.videoWidth) - sx) / sw * w, ((y * video.videoHeight) - sy) / sh * h];
+  const [px, py] = map(ABS.pad.cx, ABS.pad.cy);
+  const rx = ABS.pad.rx * video.videoWidth / sw * w, ry = ABS.pad.ry * video.videoHeight / sh * h;
+  const fill = Math.min(1, (state.home.dwell || 0) / ABS.homeHold);
+  ctx.save();
+  ctx.setLineDash([8, 6]); ctx.lineWidth = 3;
+  ctx.strokeStyle = fill > 0 ? '#3ddc84' : '#4da3ff';
+  ctx.beginPath(); ctx.ellipse(px, py, rx, ry, 0, 0, 7); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 0.1; ctx.fillStyle = '#4da3ff';
+  ctx.beginPath(); ctx.ellipse(px, py, rx, ry, 0, 0, 7); ctx.fill();
+  ctx.globalAlpha = 1;
+  if (fill > 0) {
+    ctx.strokeStyle = '#3ddc84'; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.ellipse(px, py, rx, ry, 0, -Math.PI / 2, -Math.PI / 2 + fill * Math.PI * 2); ctx.stroke();
   }
   ctx.restore();
 }
@@ -56,10 +91,12 @@ export function drawHand(canvas, video, state, { mirror = true, dim = 0.25 } = {
 /** The start checklist: each step ticks off when done, in order; then onDone(). Steps:
  *  camera on, hand seen, a fist (that pauses), a pinch (that grips), open the hand (go). */
 export class Checklist {
-  constructor(el, onDone, { gripText } = {}) {
+  /** steps / check: other steps ([[key, html]]) and their test (key, state, camera) -> bool */
+  constructor(el, onDone, { gripText, steps, check } = {}) {
     this.el = el;
     this.onDone = onDone;
-    this.steps = [
+    this.check = check;
+    this.steps = steps || [
       ['camera', 'Camera on'],
       ['hand', 'Show your hand: palm toward the camera, the whole hand in view'],
       ['fist', 'Make a fist ✊: that <b>pauses</b> the robot'],
@@ -82,7 +119,7 @@ export class Checklist {
     if (this.i >= this.steps.length) return;
     const k = this.steps[this.i][0];
     const g = state?.gesture;
-    const ok = k === 'camera' ? camera
+    const ok = this.check ? this.check(k, state, camera) : k === 'camera' ? camera
       : k === 'hand' ? !!state?.tracked
       : k === 'fist' ? g === 'fist'
       : k === 'pinch' ? g === 'pinch'

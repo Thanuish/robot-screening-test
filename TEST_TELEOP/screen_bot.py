@@ -123,6 +123,32 @@ def _turn(a, b):
     return np.eye(3) + s_ * K + (1 - c) * K @ K
 
 
+def do_ring_flat(bot, n, peg):
+    """Ring n lies flat; the peg stands straight up: take the ring by its rim (where the tube runs
+    along x, the fingers closing across it along y), lift it over the peg's tip, lower it straight
+    down, let go."""
+    Z = S.TABLE_Z
+    g, cfg = bot.game, SS.CFG
+    o, mk = cfg.objects[n], cfg.markers[peg]
+    c, _ = bot.obj(n)
+    R = o.half[0]                                        # (the tube's middle, from the centre)
+    grab = np.array([c[0], c[1] + R, c[2]])
+    bot.move_to(grab + [0, 0, 0.12], 1.2, yaw=0.0)
+    bot.move_to(grab, 1.0)
+    bot.gripper(True)
+    top = Z + mk.p["length"] + 0.06
+    bot.move_to(np.array([grab[0], grab[1], top]), 1.0)
+    print(f"  {n} lifted: held {g.held[n]}")
+    over = np.array([mk.pos[0], mk.pos[1] + R, top])
+    bot.move_to(over, 1.6)
+    bot.move_to(np.array([over[0], over[1], Z + 0.013]), 1.6)   # (all the way down: no drop)
+    ph = g.phase
+    bot.gripper(False, 0.7)
+    if g.phase is ph:
+        bot.move_to(np.array([over[0], over[1], Z + 0.15]), 1.0)   # (straight up: the fingers off the ring)
+    bot.advance(1.0)
+
+
 def do_ring(bot, n, peg):
     """Ring n stands on its edge (its axis along world x): take it by the top of its tube, the
     fingers across the tube; turn it so its hole lines up with the peg; bring it to just past the
@@ -259,7 +285,9 @@ class Bot:
         t_end = self.d.time + timeout
         while self.game.phase.key != key and self.d.time < t_end:
             self.advance(0.1)
-        while self.game.intro_until is not None and self.d.time < t_end:
+        while (self.game.intro_until is not None or self.game.ready) and self.d.time < t_end:
+            if self.game.ready:
+                self.game.go()
             self.advance(0.1)
         assert self.game.phase.key == key, f"expected phase {key}, got {self.game.phase.key}"
 
@@ -368,7 +396,7 @@ def play_phase(bot, ph):
     for st in ph.steps:
         mk = cfg.markers.get(st.marker) if st.marker else None
         if st.type == "reach":
-            bot.move_to(st.target, 1.5)
+            bot.move_to(g._target(ph.steps.index(st)), 1.5)
         elif st.type == "place_in_zone":
             bot.pick_place(st.object, mk.pos)
             print(f"  {st.object}: in the zone {g._in_zone(st.object, st.marker)}")
@@ -389,7 +417,10 @@ def play_phase(bot, ph):
                 raise SystemExit(f"the bot can only pour '{st.objects[0]}' from a cup they start in")
             do_pour(bot, cup, st.marker)
         elif st.type == "hang_on":
-            do_ring(bot, st.object, st.marker)
+            if cfg.objects[st.object].pitch == 0 and cfg.markers[st.marker].p["tilt"] == 0:
+                do_ring_flat(bot, st.object, st.marker)
+            else:
+                do_ring(bot, st.object, st.marker)
         elif st.type == "stack":
             do_stack(bot, st)
         elif st.type == "follow_wire":
@@ -420,7 +451,18 @@ def main():
         bot.wait_phase(ph.key, timeout=ph.limit + 60)
         bot.pic(f"{ph.key}_start")
         print(f"{ph.title} ({ph.key})")
-        if ph.key not in a.skip:
+        if ph.key not in a.skip and ph.trials:
+            for k in range(ph.trials):                      # (each trial: pinch, play, wait for its end)
+                if g.phase is not ph:
+                    break
+                bot.wait_phase(ph.key, timeout=10)
+                print(f"  -- trial {k + 1}/{ph.trials}")
+                play_phase(bot, ph)
+                t_end = bot.d.time + ph.limit
+                while g.phase is ph and g.trial == k and bot.d.time < t_end:
+                    bot.advance(0.25)
+                bot.grip, bot.rot, bot.yaw = 0.0, None, 0.0
+        elif ph.key not in a.skip:
             play_phase(bot, ph)
             for _ in range(ROUNDS - 1):                     # (repeat: a few more rounds)
                 if not ph.repeat or g.phase is not ph:
@@ -434,6 +476,10 @@ def main():
     print(f"\nresults ({g.results_path}):")
     res = json.loads(g.results_path.read_text())
     for k, mt in res["metrics"].items():
+        if "trials" in mt:
+            print(f"  {k:7s} trials " + ", ".join(f"{'ok' if tr['success'] else 'FAIL'} {tr['time_s']:.1f}s "
+                                                  f"bumps {tr['bumps']} -> {tr['score']}" for tr in mt["trials"]))
+            continue
         print(f"  {k:7s} completed {mt['completed']!s:5} time {mt['time_s']:6.1f}s steps {mt['steps_done']}/{mt['steps_total']} "
               f"grasps {mt['grasps']}/{mt['grasp_attempts']} drops {mt['drops']} path {mt['path_m']:.2f} m "
               f"clutches {mt['clutches']} wrong bin {mt['wrong_bin']} episode {mt['episode']}")
