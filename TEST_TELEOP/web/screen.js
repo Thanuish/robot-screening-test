@@ -24,6 +24,7 @@ function fmt(s) {
 // So: a ring on the table straight below the gripper (where it would land), a thin line down to
 // it, and both turn green when the fingertips are low enough to grab something ([depth_cues]).
 const CFG = window.SCREEN_CONFIG, CUES = CFG.depth_cues;
+const GRIP = CFG.gripper_prefix || `${CFG.arm}_gripper_`;   // the gripper's names (on the arm, or floating)
 const TABLE_Z = CFG.table_z, GRAB_HEIGHT = CUES.grab_height;
 const CUE_COLOUR = parseInt(CUES.color.slice(1), 16), GRAB_COLOUR = parseInt(CUES.grab_color.slice(1), 16);
 let cues = null;
@@ -47,7 +48,7 @@ function updateCues() {
   const T = window.__teleop;
   if (!CUES.enabled || !T || !T.body) return;
   if (!cues) makeCues();
-  const r = T.body(`${CFG.arm}_gripper_right_pad`), l = T.body(`${CFG.arm}_gripper_left_pad`);
+  const r = T.body(`${GRIP}right_pad`), l = T.body(`${GRIP}left_pad`);
   if (!r || !l) { cues.grp.visible = false; return; }
   const THREE = T.THREE, p = new THREE.Vector3(), q = new THREE.Vector3();
   r.getWorldPosition(p); l.getWorldPosition(q);
@@ -123,7 +124,7 @@ function sideRect() {                                  // [x, y from the bottom,
 }
 function drawSideView(renderer, scene) {
   const T = window.__teleop, THREE = T.THREE;
-  const r = T.body(`${CFG.arm}_gripper_right_pad`), l = T.body(`${CFG.arm}_gripper_left_pad`);
+  const r = T.body(`${GRIP}right_pad`), l = T.body(`${GRIP}left_pad`);
   if (!r || !l) { sideFrame.style.display = 'none'; return; }
   const p = new THREE.Vector3(), q = new THREE.Vector3();
   r.getWorldPosition(p); l.getWorldPosition(q);
@@ -170,17 +171,13 @@ tracker.then(({ delegate }) => {
 const checklist = new Checklist($('checklist'), () => {
   hand.arm(true);                                         // (now the hand drives: the test goes on)
   $('handBox').classList.remove('hidden');
-}, { gripText: 'Press <b>SPACE</b>: the gripper <b>closes</b> 🤏 (press it again to open, then open your hand)' });
-// SPACE toggles the gripper (press: closed, press again: open); W/S and A/D tilt the gripper in
-// tasks with full rotation (the hand moves and twists; it never has to tilt)
+});
+// a pinch (thumb and index finger together) closes the gripper while it is held; W/S and A/D tilt
+// the gripper in tasks with full rotation (the hand moves and twists; it never has to tilt)
 const tiltKeys = { KeyW: 0, KeyS: 0, KeyA: 0, KeyD: 0 };
 function updateTilt() { hand?.setTilt(tiltKeys.KeyW - tiltKeys.KeyS, tiltKeys.KeyD - tiltKeys.KeyA); }
 window.addEventListener('keydown', (e) => {
-  if (e.code in tiltKeys) { tiltKeys[e.code] = 1; updateTilt(); return; }
-  if (e.code !== 'Space') return;
-  e.preventDefault();
-  if (e.repeat || !hand) return;
-  hand.toggleGrip();
+  if (e.code in tiltKeys) { tiltKeys[e.code] = 1; updateTilt(); }
 });
 window.addEventListener('keyup', (e) => { if (e.code in tiltKeys) { tiltKeys[e.code] = 0; updateTilt(); } });
 window.addEventListener('blur', () => { for (const k in tiltKeys) tiltKeys[k] = 0; updateTilt(); });
@@ -209,7 +206,7 @@ $('camBtn').addEventListener('click', async () => {
     hand = new HandControl({
       send: (m) => window.__teleop?.send?.(m),
       status: () => lastStatus,
-      gripMode: 'key',
+      gripMode: 'pinch',
       onFrame: (st) => {
         handState = st;
         checklist.update(true, st);

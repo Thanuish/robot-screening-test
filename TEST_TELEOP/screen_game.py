@@ -199,8 +199,7 @@ class ScreenGame:
             SS.show_marker(info, d, mk)
         # the arm back home, gripper open
         s = self.side
-        d.qpos[info.arm_qpos_adr[s]] = self.sim.arms.home[s]
-        d.qvel[info.arm_dof_adr[s]] = 0
+        self.sim.arms.place_home(d, s)
         self.sim.arms.reset(d)
         self.sim.arms.teleop[s].gripper = 0.0
         mujoco.mj_forward(self.m, d)

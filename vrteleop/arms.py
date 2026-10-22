@@ -10,6 +10,30 @@ from .ik import DiffIK, QPIK
 from .teleop import ArmTeleop
 
 
+class FloatingIK:
+    """A floating gripper's stand-in for the IK (a scene with info.floating): its "joint angles"
+    are the pinch point's pose itself, [x y z qw qx qy qz]; the target goes to it directly."""
+
+    def fk(self, q, full_qpos=None):
+        q = np.asarray(q, float)
+        return q[:3].copy(), q[3:] / np.linalg.norm(q[3:])
+
+    def step(self, q, pos, quat, dt, full_qpos=None):
+        return np.concatenate([np.asarray(pos, float), np.asarray(quat, float)])
+
+
+def _mat(quat):
+    R = np.zeros(9)
+    mujoco.mju_quat2Mat(R, np.asarray(quat, float))
+    return R.reshape(3, 3)
+
+
+def _quat(R):
+    q = np.zeros(4)
+    mujoco.mju_mat2Quat(q, np.asarray(R, float).ravel())
+    return q
+
+
 class DualArms:
     def __init__(self, info: S.SceneInfo, task: str, pos_scale: float = 1.0):
         self.info = info
@@ -33,13 +57,69 @@ class DualArms:
         # still; when released, the clutch takes hold afresh (no jump)
         self.frozen: set = set()
         self._homing = {s: None for s in S.SIDES}     # an arm gliding back to a pose (start_homing)
+        # a floating gripper in place of one arm (info.floating, set by a task's bind): its pose is
+        # commanded through a mocap target, the hidden arm stays at home
+        self.float = getattr(info, "floating", None)
+        if self.float is not None:
+            self._setup_floating()
+
+    def _setup_floating(self):
+        """The floating gripper starts where the arm's gripper is at home (same pose): the pinch
+        point's pose relative to the gripper's mount, and that home pose."""
+        f, m = self.float, self.info.model
+        s = f["side"]
+        d0 = mujoco.MjData(m)
+        d0.qpos[self.info.arm_qpos_adr[s]] = self.home[s]
+        mujoco.mj_kinematics(m, d0)
+        arm_site = m.site(f"{s}_gripper_pinch").id
+        home_p = d0.site_xpos[arm_site].copy()
+        home_R = d0.site_xmat[arm_site].reshape(3, 3).copy()
+        Rm, pm = d0.xmat[f["body"]].reshape(3, 3), d0.xpos[f["body"]]
+        ps, Rs = d0.site_xpos[self.info.ee_site[s]], d0.site_xmat[self.info.ee_site[s]].reshape(3, 3)
+        f["R_rel"], f["p_rel"] = Rm.T @ Rs, Rm.T @ (ps - pm)        # pinch point in the mount's frame
+        self.arm_home = self.home[s].copy()
+        self.home[s] = np.concatenate([home_p, _quat(home_R)])
+        self.ik[s] = FloatingIK()
+        self.q_cmd[s] = self.home[s].copy()
+
+    def _floating(self, s: str) -> bool:
+        return self.float is not None and s == self.float["side"]
+
+    def _mount_pose(self, q):
+        """The mount's pose that puts the pinch point at pose q."""
+        f = self.float
+        p, quat = FloatingIK().fk(q)
+        Rm = _mat(quat) @ f["R_rel"].T
+        return p - Rm @ f["p_rel"], _quat(Rm)
+
+    def _command(self, d: mujoco.MjData, s: str):
+        if self._floating(s):
+            p, quat = self._mount_pose(self.q_cmd[s])
+            d.mocap_pos[self.float["mocap"]], d.mocap_quat[self.float["mocap"]] = p, quat
+            d.ctrl[self.info.arm_act[s]] = self.arm_home
+        else:
+            d.ctrl[self.info.arm_act[s]] = self.q_cmd[s]
+
+    def place_home(self, d: mujoco.MjData, side: str):
+        """Put an arm (or the floating gripper) at its home pose, at rest."""
+        if self._floating(side):
+            f = self.float
+            p, quat = self._mount_pose(self.home[side])
+            d.qpos[f["qadr"]:f["qadr"] + 7] = np.concatenate([p, quat])
+            d.qvel[f["vadr"]:f["vadr"] + 6] = 0
+            d.mocap_pos[f["mocap"]], d.mocap_quat[f["mocap"]] = p, quat
+            d.qpos[self.info.arm_qpos_adr[side]] = self.arm_home
+        else:
+            d.qpos[self.info.arm_qpos_adr[side]] = self.home[side]
+        d.qvel[self.info.arm_dof_adr[side]] = 0
 
     def use_qp_ik(self, **opts):
         """Switch every arm to the QP IK (joint limits and speeds as exact bounds, table
         keep-out); opts go to QPIK (e.g. clearance={...})."""
         m = self.info.model
-        self.ik = {s: QPIK(m, self.info.arm_qpos_adr[s], self.info.arm_dof_adr[s], self.info.ee_site[s],
-                           self.home[s], prefix=f"{s}_", **opts) for s in S.SIDES}
+        self.ik = {s: self.ik[s] if self._floating(s) else
+                   QPIK(m, self.info.arm_qpos_adr[s], self.info.arm_dof_adr[s], self.info.ee_site[s],
+                        self.home[s], prefix=f"{s}_", **opts) for s in S.SIDES}
 
     def start_homing(self, side: str, q=None, speed_deg: float = 60.0):
         """Glide the arm back to joint angles q (default: its home pose), about speed_deg per
@@ -47,6 +127,13 @@ class DualArms:
         meanwhile; afterwards the clutch takes hold afresh (no jump). The gripper stays as it is."""
         q1 = np.asarray(self.home[side] if q is None else q, float)
         q0 = self.q_cmd[side].copy()
+        if self._floating(side):                    # (a pose: the shorter way round; the time by distance)
+            if np.dot(q0[3:], q1[3:]) < 0:
+                q1 = np.concatenate([q1[:3], -q1[3:]])
+            ang = 2 * np.arccos(min(1.0, abs(float(np.dot(q0[3:] / np.linalg.norm(q0[3:]), q1[3:])))))
+            dur = float(np.clip(max(np.linalg.norm(q1[:3] - q0[:3]) / 0.25, ang / np.radians(speed_deg)), 0.8, 3.0))
+            self._homing[side] = dict(q0=q0, q1=q1, t=0.0, dur=dur)
+            return
         dur = float(np.clip(np.max(np.abs(q1 - q0)) / np.radians(speed_deg), 0.8, 3.0))
         self._homing[side] = dict(q0=q0, q1=q1, t=0.0, dur=dur)
 
@@ -140,7 +227,7 @@ class DualArms:
                 self._goal[s] = self._smooth[s] = None
                 if h["t"] >= h["dur"]:
                     self._homing[s] = None
-                d.ctrl[self.info.arm_act[s]] = self.q_cmd[s]
+                self._command(d, s)
                 d.ctrl[self.info.grip_act[s]] = 255.0 * tel.gripper
                 continue
             if not tel.engaged:
@@ -160,7 +247,7 @@ class DualArms:
             else:
                 self._goal[s] = None              # (starts again from wherever the arm is)
                 self._smooth[s] = None
-            d.ctrl[self.info.arm_act[s]] = self.q_cmd[s]
+            self._command(d, s)
             d.ctrl[self.info.grip_act[s]] = 255.0 * tel.gripper
 
     def gripper(self, side: str) -> float:

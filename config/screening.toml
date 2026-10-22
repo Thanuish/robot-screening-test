@@ -34,6 +34,7 @@ max_turn_deg = 90              # [deg/s] its top turning speed
 servo_stiffness = 1.0          # x the UR5e's own joint motor stiffness (higher = follows faster; 3 was shaky)
 ik = "qp"                      # "qp": joint limits and speeds kept exactly, the arm never pushes into the table; "dls": the old IK
 table_clearance = 0.02         # [m] the wrist and forearm keep at least this far above the table (ik = "qp")
+mount = "floating"             # "floating": the gripper on its own, no arm (it follows the hand directly); "arm": on the UR5e
 
 [controls]
 motion_scale = 1.0             # the robot moves this many cm per cm the phone moves
@@ -508,7 +509,7 @@ handle_length = 0.12
 key = "pair"
 kind = "pair"
 title = "Hand control"
-text = "Start the camera and follow the steps: your open hand drives the robot, a fist pauses it, SPACE grips and lets go."
+text = "Start the camera and follow the steps: your open hand drives the robot, a fist pauses it, a pinch grips (let go: open the fingers)."
 
 [[phases]]
 key = "reach"

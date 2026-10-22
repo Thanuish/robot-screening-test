@@ -186,15 +186,61 @@ def _add_wire(wb, body, n, mk: C.Marker):
     _capsule(wand, f"{n}_grip", [-p["handle"] + 0.03, 0, 0], [-p["handle"] - 0.03, 0, 0], 0.009, rgba=[0.12, 0.12, 0.14, 1])
 
 
-def _hide_other_arm(spec: mujoco.MjSpec):
-    """The test uses one arm. The other one stays in the model (the simulator expects two) but is
-    invisible and touches nothing: its geoms go to a group no viewer draws, without collisions."""
-    other = "left_" if CFG.arm.side == "right" else "right_"
+FLOAT = C.FLOAT_PREFIX
+FLOAT_MOUNT, FLOAT_TARGET = FLOAT + "mount", FLOAT + "target"
+# where the floating gripper's mount is built (the game then puts it where the arm's gripper is at
+# home), pointing down: turned 180 deg about x (the 2F-85's fingers point along its +z)
+FLOAT_HOME = (0.45, -0.20, TABLE_Z + 0.35)
+FLOAT_QUAT = [0.0, 1.0, 0.0, 0.0]
+
+
+def _add_floating_gripper(spec: mujoco.MjSpec):
+    """[arm] mount = "floating": a Robotiq 2F-85 on its own, a free body held by a soft weld to an
+    invisible target the hand moves (mocap); it still collides with the table and the objects and
+    really grips. No arm, no inverse kinematics: the hand's target goes to the gripper directly."""
+    grip = mujoco.MjSpec.from_file(str(S.GRIPPER_XML))
+    grip.option.cone, grip.option.impratio, grip.option.integrator = spec.option.cone, spec.option.impratio, spec.option.integrator
+    wb = spec.worldbody
+    body = wb.add_body()
+    body.name = FLOAT_MOUNT
+    body.pos = list(FLOAT_HOME)
+    body.quat = FLOAT_QUAT
+    j = body.add_freejoint()
+    j.name = FLOAT + "joint"
+    site = body.add_site()
+    site.name = FLOAT + "attach"
+    site.attach_body(grip.body("base_mount"), FLOAT, "")
+    tgt = wb.add_body()
+    tgt.name = FLOAT_TARGET
+    tgt.mocap = True
+    tgt.pos = list(FLOAT_HOME)
+    tgt.quat = FLOAT_QUAT
+    eq = spec.add_equality()
+    eq.name = FLOAT + "weld"
+    eq.type = mujoco.mjtEq.mjEQ_WELD
+    eq.objtype = mujoco.mjtObj.mjOBJ_BODY
+    eq.name1, eq.name2 = FLOAT_MOUNT, FLOAT_TARGET
+    eq.solref = [0.005, 1.0]                    # (stiff, but it still gives way to the table or an object)
+    eq.solimp = [0.95, 0.99, 0.001, 0.5, 2.0]
     for b in spec.bodies:
-        if b.name.startswith(other):
+        if b.name.startswith(FLOAT):
+            b.gravcomp = 1.0
+
+
+def _hide_arm(spec: mujoco.MjSpec, prefix: str):
+    """An arm that stays in the model (the simulator expects two) but is invisible and touches
+    nothing: its geoms go to a group no viewer draws, without collisions."""
+    for b in spec.bodies:
+        if b.name.startswith(prefix):
             for g in b.geoms:
                 g.group = HIDDEN_GROUP
                 g.contype = g.conaffinity = 0
+
+
+def _hide_other_arm(spec: mujoco.MjSpec):
+    """The test uses one arm. The other one stays in the model (the simulator expects two) but is
+    invisible and touches nothing: its geoms go to a group no viewer draws, without collisions."""
+    _hide_arm(spec, "left_" if CFG.arm.side == "right" else "right_")
 
 
 def _stiffer_servos(spec: mujoco.MjSpec, k: float):
@@ -325,6 +371,9 @@ def add(spec: mujoco.MjSpec):
     """Add the objects, markers and the reach target to the scene; hide the unused arm."""
     _hide_other_arm(spec)
     _stiffer_servos(spec, CFG.arm.servo_stiffness)
+    if CFG.arm.mount == "floating":
+        _hide_arm(spec, f"{CFG.arm.side}_")
+        _add_floating_gripper(spec)
     wb = spec.worldbody
     for m in CFG.materials.values():
         T.add_material(spec, _mat(m.name), m.texture, rgba=m.rgba, specular=m.specular, shininess=m.shininess,
@@ -373,11 +422,20 @@ def add(spec: mujoco.MjSpec):
 
 
 def bind(info: S.SceneInfo):
-    """The objects are recorded as object poses (episode files)."""
+    """The objects are recorded as object poses (episode files). A floating gripper takes the
+    arm's place for the game: its pinch point, its finger motor, its finger joint."""
     m = info.model
     info.objects = dict(CFG.objects)
     for name in CFG.objects:
         info.obj_qpos_adr[name] = m.jnt_qposadr[m.joint(f"{name}_joint").id]
+    if CFG.arm.mount == "floating":
+        s = CFG.arm.side
+        info.ee_site[s] = m.site(FLOAT + "pinch").id
+        info.grip_act[s] = m.actuator(FLOAT + "fingers_actuator").id
+        info.grip_qpos_adr[s] = m.jnt_qposadr[m.joint(FLOAT + "right_driver_joint").id]
+        info.floating = dict(side=s, mocap=int(m.body_mocapid[m.body(FLOAT_TARGET).id]), body=m.body(FLOAT_MOUNT).id,
+                             qadr=int(m.jnt_qposadr[m.joint(FLOAT + "joint").id]),
+                             vadr=int(m.jnt_dofadr[m.joint(FLOAT + "joint").id]), home=FLOAT_HOME)
 
 
 # ---------------------------------------------------------------- placing

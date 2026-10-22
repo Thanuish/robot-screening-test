@@ -35,6 +35,7 @@ STEP_TYPES = ("reach", "place_in_zone", "place_in_slot", "place_in_bin", "remove
               "pour_into", "set_upright", "hang_on", "follow_wire", "stack")
 LATCHED = ("reach", "remove_from", "lay_flat", "pour_into", "set_upright", "follow_wire")   # stay done once done
 PLACE_STEPS = ("place_in_zone", "place_in_slot", "place_in_bin")
+FLOAT_PREFIX = "floatgrip_"      # the floating gripper's names in the model ([arm] mount = "floating")
 
 
 class ConfigError(Exception):
@@ -55,6 +56,7 @@ class Arm:
     max_turn: float              # [rad/s]
     servo_stiffness: float
     ik: str = "qp"               # "qp": QP IK (exact joint limits, table keep-out); "dls": the old one
+    mount: str = "arm"           # "arm": the gripper on the UR5e; "floating": a gripper on its own (no arm, no IK)
     table_clearance: float = 0.02  # [m] the wrist keeps this far above the table (qp)
 
 
@@ -177,6 +179,7 @@ class Config:
     def public(self) -> dict:
         """What the web pages need (monitor, phone, admin)."""
         return dict(arm=self.arm.side, view=self.view, depth_cues=self.depth_cues, table_z=TABLE_Z,
+                    gripper_prefix=FLOAT_PREFIX if self.arm.mount == "floating" else f"{self.arm.side}_gripper_",
                     phases=[dict(key=p.key, title=p.title, kind=p.kind, scored=p.scored) for p in self.phases],
                     pass_mark=self.scoring["pass_mark"], must_complete=self.scoring["must_complete"])
 
@@ -351,7 +354,7 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
     # ---- arm
     a = raw.get("arm", {})
     c.keys(a, "arm", ("model", "side", "base", "home_deg", "min_height", "max_speed", "max_turn_deg",
-                      "servo_stiffness", "ik", "table_clearance"))
+                      "servo_stiffness", "ik", "table_clearance", "mount"))
     side = c.text(a, "side", "arm", "right", ("left", "right"))
     arm = Arm(model=c.text(a, "model", "arm", "ur5e", ("ur5e",)), side=side,
               base=tuple(c.vec(a, "base", "arm", 2, [0.0, 0.36 if side == "left" else -0.36])),
@@ -362,6 +365,7 @@ def parse(raw: dict, p: Path | str = "<config>") -> Config:
               max_turn=math.radians(c.num(a, "max_turn_deg", "arm", 180, lo=0.0, hi=720, lo_open=True)),
               servo_stiffness=c.num(a, "servo_stiffness", "arm", 1.0, lo=0.1, hi=10),
               ik=c.text(a, "ik", "arm", "qp", ("qp", "dls")),
+              mount=c.text(a, "mount", "arm", "arm", ("arm", "floating")),
               table_clearance=c.num(a, "table_clearance", "arm", 0.02, lo=0.0, hi=0.2))
     if not (TABLE_X[0] <= arm.base[0] <= TABLE_X[1] and TABLE_Y[0] <= arm.base[1] <= TABLE_Y[1]):
         c.err("arm.base", f"{arm.base} is off the table")
