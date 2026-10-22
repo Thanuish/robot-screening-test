@@ -170,6 +170,13 @@ tracker.then(({ delegate }) => {
 const checklist = new Checklist($('checklist'), () => {
   hand.arm(true);                                         // (now the hand drives: the test goes on)
   $('handBox').classList.remove('hidden');
+}, { gripText: 'Press <b>SPACE</b>: the gripper <b>closes</b> 🤏 (press it again to open, then open your hand)' });
+// SPACE toggles the gripper (press: closed, press again: open); the hand only drives and pauses
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space') return;
+  e.preventDefault();
+  if (e.repeat || !hand) return;
+  hand.toggleGrip();
 });
 function setChip(el, state) {
   const g = state?.gesture || 'none';
@@ -196,6 +203,7 @@ $('camBtn').addEventListener('click', async () => {
     hand = new HandControl({
       send: (m) => window.__teleop?.send?.(m),
       status: () => lastStatus,
+      gripMode: 'key',
       onFrame: (st) => {
         handState = st;
         checklist.update(true, st);

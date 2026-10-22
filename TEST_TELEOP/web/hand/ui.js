@@ -48,14 +48,14 @@ export function drawHand(canvas, video, state, { mirror = true, dim = 0.25 } = {
 /** The start checklist: each step ticks off when done, in order; then onDone(). Steps:
  *  camera on, hand seen, a fist (that pauses), a pinch (that grips), open the hand (go). */
 export class Checklist {
-  constructor(el, onDone) {
+  constructor(el, onDone, { gripText } = {}) {
     this.el = el;
     this.onDone = onDone;
     this.steps = [
       ['camera', 'Camera on'],
       ['hand', 'Show your hand: palm toward the camera, the whole hand in view'],
       ['fist', 'Make a fist ✊: that <b>pauses</b> the robot'],
-      ['pinch', 'Open it, then pinch 🤏 thumb and index finger: that <b>grips</b>'],
+      ['pinch', gripText || 'Open it, then pinch 🤏 thumb and index finger: that <b>grips</b>'],
       ['open', 'Open your hand ✋: now it <b>drives</b> the robot'],
     ];
     this.i = 0;
@@ -78,7 +78,7 @@ export class Checklist {
       : k === 'hand' ? !!state?.tracked
       : k === 'fist' ? g === 'fist'
       : k === 'pinch' ? g === 'pinch'
-      : g === 'open';
+      : g === 'open' && !state?.gripping;
     this.held = ok ? this.held + 1 : 0;
     if (this.held >= (k === 'camera' ? 1 : 6)) {             // (held for a few frames: not a flicker)
       this.i++;

@@ -7,8 +7,9 @@
 //   open hand   drives the robot (the clutch is held): the gripper follows the hand's motion
 //               and turns (in tasks with full rotation it also tilts)
 //   fist        pauses: move the hand without moving the robot (like lifting a mouse), open again
-//   pinch       (thumb and index finger together, the other fingers open) closes the gripper;
-//               open the pinch to let go
+//   pinch       (thumb and index finger together) closes the gripper; open the pinch to let go
+//               (gripMode 'pinch'); with gripMode 'key' a key toggles the gripper instead
+//               (toggleGrip(): the computer's SPACE bar)
 //
 // Frames. The camera looks at the person from in front (the screen, or a phone standing there):
 // camera x = right in its image (the person's left), y = down, z = away from the camera. MuJoCo:
@@ -130,6 +131,7 @@ export function preload() {
 export class HandControl {
   constructor(opts) {
     this.opts = opts;
+    this.gripMode = opts.gripMode || 'pinch';     // 'pinch': the pinch grips; 'key': toggleGrip() does
     this.armed = false;
     this.fist = false;
     this.pinched = false;
@@ -168,6 +170,8 @@ export class HandControl {
   }
 
   stop() { this.running = false; if (shared) shared.onResult = null; }
+  /** gripMode 'key': close the gripper if open, open it if closed */
+  toggleGrip() { this.pinched = !this.pinched; return this.pinched; }
   arm(on) { this.armed = on; this.epoch++; }
 
   _result(m) {
@@ -187,7 +191,8 @@ export class HandControl {
       // driving (in a pinch the index bends toward the thumb and the others may curl: no fist)
       // (the index folded into the palm decides: then it is a fist whatever the thumb does)
       this.fist = hp.indexFolded && (this.fist ? hp.curled >= 2 : hp.curled >= 3);
-      if (!this.fist) this.pinched = this.pinched ? hp.pinch < SETTINGS.pinchOff : hp.pinch < SETTINGS.pinchOn;
+      if (!this.fist && this.gripMode === 'pinch')
+        this.pinched = this.pinched ? hp.pinch < SETTINGS.pinchOff : hp.pinch < SETTINGS.pinchOn;
       state.gesture = this.fist ? 'fist' : this.pinched ? 'pinch' : 'open';
       state.gripping = this.pinched;
       // smoothed position (depth filtered on its own: it is the noisiest)

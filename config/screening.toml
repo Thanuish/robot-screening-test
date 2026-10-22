@@ -507,7 +507,7 @@ handle_length = 0.12
 key = "pair"
 kind = "pair"
 title = "Hand control"
-text = "Start the camera and follow the steps: your open hand drives the robot, a fist pauses it, a pinch grips."
+text = "Start the camera and follow the steps: your open hand drives the robot, a fist pauses it, SPACE grips and lets go."
 
 [[phases]]
 key = "reach"
